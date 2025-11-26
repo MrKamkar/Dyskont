@@ -72,3 +72,5 @@ przebiegu symulacji zapisać w pliku (plikach) tekstowym.
 **Opis:** Kasa samoobsługowa ulega **blokadzie**.  
 **Oczekiwany wynik:** Pracownik dokonuje **interwencji**, klient kończy transakcję.
 
+## Link do githuba:
+https://github.com/MrKamkar/Dyskont
