@@ -12,7 +12,7 @@ samoobsługowych (**ok. 95%**), pozostali (**ok. 5%**) stają w kolejce do kas s
 – Zawsze działają co najmniej **3 kasy samoobsługowe**;  
 – Na każdych **K klientów** znajdujących się na terenie dyskontu powinno przypadać min. **1
 czynne stanowisko kasowe**.  
-– Jeśli liczba klientów jest mniejsza niż **K*(N-3)**, gdzie **N** oznacza liczbę czynnych kas, to **jedna
+– Jeśli liczba klientów jest mniejsza niż **K×(N-3)**, gdzie **N** oznacza liczbę czynnych kas, to **jedna
 z kas zostaje zamknięta**;  
 – Jeżeli czas oczekiwania w kolejce na kasę samoobsługową jest dłuższy niż **T**, klient może
 przejść do **kasy stacjonarnej** jeżeli jest otwarta;  
