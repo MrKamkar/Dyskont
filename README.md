@@ -1,5 +1,8 @@
 # Temat 16 – **Dyskont**
 
+**Kamil Karpiel**  
+Grupa 1 | Studia stacjonarne | III semestr | Nr albumu 155184
+
 W pewnym dyskoncie jest łącznie **8 kas**: **2 kasy stacjonarne** i **6 kas samoobsługowych**. Klienci
 przychodzą do sklepu w dowolnych momentach czasu i przebywają w nim przez pewien określony
 (losowy) dla każdego z nich czas robiąc zakupy – **od 3 do 10 produktów** różnych kategorii (owoce,
