@@ -16,13 +16,10 @@
 *.gch
 *.pch
 
-# Libraries
 *.lib
 *.a
 *.la
 *.lo
-
-# Shared objects (inc. Windows DLLs)
 *.dll
 *.so
 *.so.*
@@ -36,13 +33,11 @@
 *.x86_64
 *.hex
 
-# Debug files
 *.dSYM/
 *.su
 *.idb
 *.pdb
 
-# Kernel Module Compile Results
 *.mod*
 *.cmd
 .tmp_versions/
@@ -51,5 +46,27 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
-# debug information files
-*.dwo
+# ----------------------------------------------------------------------
+# Visual Studio / Windows IDE Specifics
+# ----------------------------------------------------------------------
+
+# Visual Studio cache/options directory
+.vs/
+
+# Build results (Standard VS Output Folders)
+Debug/
+Release/
+x64/
+x86/
+build/
+
+# User-specific project files (Do not commit these)
+*.user
+*.userosscache
+*.sln.docstates
+
+# IntelliSense and local configuration
+*.suo
+*.opensdf
+*.sdf
+*.ipch
