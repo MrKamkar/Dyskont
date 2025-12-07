@@ -5,7 +5,7 @@ CFLAGS = -Wall -Wextra -std=c17 -I./Dyskont -D_GNU_SOURCE
 # Biblioteki wymagane do projektu
 LDFLAGS = -lpthread -lrt
 
-TARGET = dyskont_app
+TARGET = dyskont.out
 SRC_DIR = Dyskont
 
 # Automatyczne szukanie plikow .c w folderze Dyskont

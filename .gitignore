@@ -70,3 +70,6 @@ build/
 *.opensdf
 *.sdf
 *.ipch
+
+# Dyskont executable file
+dyskont.out
