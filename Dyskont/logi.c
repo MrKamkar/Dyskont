@@ -1,15 +1,7 @@
 #include "logi.h"
-#include <stdio.h>
-#include <time.h>
-#include <string.h>
-#include <fcntl.h>
-#include <unistd.h>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/ipc.h>
-#include <sys/msg.h>
-#include <stdlib.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 static int id_kolejki = -1;
 static pid_t pid_loggera = -1;
@@ -126,7 +118,7 @@ void ZamknijSystemLogowania() {
     msgctl(id_kolejki, IPC_RMID, NULL);
 }
 
-void ZapiszLog(int typ_logu, const char* format) {
+void ZapiszLog(TypLogu typ_logu, const char* format) {
     if (id_kolejki == -1) return;
 
     struct KomunikatLog msg;

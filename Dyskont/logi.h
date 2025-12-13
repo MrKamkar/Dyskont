@@ -1,12 +1,22 @@
-// Zabezpieczenie przed wielokrotnym zdefiniowaniem logi.h
 #ifndef LOGI_H
 #define LOGI_H
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+
 // Typy komunikatów logowania
-#define LOG_INFO 0
-#define LOG_OSTRZEZENIE 1
-#define LOG_BLAD 2
-#define LOG_DEBUG 3
+typedef enum {
+    LOG_INFO,
+    LOG_OSTRZEZENIE,
+    LOG_BLAD,
+    LOG_DEBUG
+} TypLogu;
 
 // Kody ANSI dla kolorow
 #define KOLOR_RESET "\033[0m"
@@ -24,7 +34,7 @@
 // Struktura komunikatu wymagana przez msgsnd/msgrcv
 struct KomunikatLog {
     long typ_komunikatu;      // Odpowiednik mtype
-    int typ_logu;             // Typ komunikatu logowania
+    TypLogu typ_logu;         // Typ komunikatu logowania
     char tresc[256];          // Tresc wiadomosci
 };
 
@@ -34,6 +44,6 @@ void UruchomProcesLogujacy();
 void ZamknijSystemLogowania();
 
 // Funkcja dla klienta
-void ZapiszLog(int typ_logu, const char* format);
+void ZapiszLog(TypLogu typ_logu, const char* format);
 
 #endif
