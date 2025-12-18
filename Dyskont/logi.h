@@ -25,9 +25,6 @@ typedef enum {
 #define KOLOR_ZOLTY "\033[33m"
 #define KOLOR_NIEBIESKI "\033[34m"
 
-// Indentyfikator kolejki
-#define ID_KOLEJKI 12345
-
 // Typ komunikatu konczacego prace loggera (musi byc > 0)
 #define TYP_KONIEC 999
 
@@ -39,7 +36,7 @@ struct KomunikatLog {
 };
 
 // Funkcje zarzadzajace
-void InicjalizujSystemLogowania();
+void InicjalizujSystemLogowania(const char* sciezka);
 void UruchomProcesLogujacy();
 void ZamknijSystemLogowania();
 

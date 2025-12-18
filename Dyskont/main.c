@@ -6,7 +6,7 @@
 
 int main(int argc, char* argv[]) {
     srand(time(NULL));
-    InicjalizujSystemLogowania();
+    InicjalizujSystemLogowania(argv[0]);
     UruchomProcesLogujacy();
 
     ZapiszLog(LOG_INFO, "Start symulacji testowej klienta");

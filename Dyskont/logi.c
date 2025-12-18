@@ -79,17 +79,26 @@ static void PetlaLoggera() {
         // Zapis do pliku
         char bufor_pliku[512];
         sprintf(bufor_pliku, "%s%s%s\n", czas_buf, prefix, msg.tresc);
-        write(deskryptor_pliku, bufor_pliku, strlen(bufor_pliku));
+        if (write(deskryptor_pliku, bufor_pliku, strlen(bufor_pliku)) == -1) {
+            perror("Blad zapisu do pliku logow");
+        }
     }
 
     close(deskryptor_pliku);
     exit(0);
 }
 
-void InicjalizujSystemLogowania() {
+void InicjalizujSystemLogowania(const char* sciezka) {
     
+    // Generowanie klucza poprzez ftok przy pomocy sciezki do pliku wykonywalnego
+    key_t klucz = ftok(sciezka, 65); // 'A' = 65
+    if (klucz == -1) {
+        perror("Blad ftok (generowanie klucza)");
+        exit(1);
+    }
+
     // Inicjalizacja IPC
-    id_kolejki = msgget(ID_KOLEJKI, IPC_CREAT | 0600);
+    id_kolejki = msgget(klucz, IPC_CREAT | 0600);
     if (id_kolejki == -1) {
         perror("Blad tworzenia kolejki komunikatow");
         exit(1);
@@ -98,6 +107,10 @@ void InicjalizujSystemLogowania() {
 
 void UruchomProcesLogujacy() {
     pid_loggera = fork();
+    if (pid_loggera == -1) {
+        perror("Blad fork (tworzenie procesu loggera)");
+        exit(1);
+    }
     if (pid_loggera == 0) {
         PetlaLoggera(); // Proces potomny
     }
@@ -111,11 +124,15 @@ void ZamknijSystemLogowania() {
 
     // Czekanie na zakonczenie procesu loggera
     if (pid_loggera != -1) {
-        waitpid(pid_loggera, NULL, 0);
+        if (waitpid(pid_loggera, NULL, 0) == -1) {
+            perror("Blad waitpid (oczekiwanie na logger)");
+        }
     }
 
     // Usuniecie kolejki
-    msgctl(id_kolejki, IPC_RMID, NULL);
+    if (msgctl(id_kolejki, IPC_RMID, NULL) == -1) {
+        perror("Blad msgctl (usuniecie kolejki)");
+    }
 }
 
 void ZapiszLog(TypLogu typ_logu, const char* format) {
