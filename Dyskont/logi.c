@@ -93,7 +93,7 @@ void InicjalizujSystemLogowania(const char* sciezka) {
     // Generowanie klucza poprzez ftok przy pomocy sciezki do pliku wykonywalnego
     key_t klucz = ftok(sciezka, 65); // 'A' = 65
     if (klucz == -1) {
-        perror("Blad ftok (generowanie klucza)");
+        perror("Blad generowania klucza");
         exit(1);
     }
 
@@ -108,7 +108,7 @@ void InicjalizujSystemLogowania(const char* sciezka) {
 void UruchomProcesLogujacy() {
     pid_loggera = fork();
     if (pid_loggera == -1) {
-        perror("Blad fork (tworzenie procesu loggera)");
+        perror("Blad fork");
         exit(1);
     }
     if (pid_loggera == 0) {
@@ -125,13 +125,13 @@ void ZamknijSystemLogowania() {
     // Czekanie na zakonczenie procesu loggera
     if (pid_loggera != -1) {
         if (waitpid(pid_loggera, NULL, 0) == -1) {
-            perror("Blad waitpid (oczekiwanie na logger)");
+            perror("Blad waitpid");
         }
     }
 
     // Usuniecie kolejki
     if (msgctl(id_kolejki, IPC_RMID, NULL) == -1) {
-        perror("Blad msgctl (usuniecie kolejki)");
+        perror("Blad usuwania kolejki");
     }
 }
 

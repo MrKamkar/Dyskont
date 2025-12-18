@@ -1,29 +1,5 @@
 #include "klient.h"
 
-// Baza przykładowych produktów
-static const Produkt BAZA_PRODUKTOW[] = {
-    {"Chleb", 3.50, KAT_PIECZYWO, 500.0},
-    {"Bulka", 0.80, KAT_PIECZYWO, 60.0},
-    {"Mleko", 4.20, KAT_NABIAL, 1000.0},
-    {"Jogurt", 2.10, KAT_NABIAL, 150.0},
-    {"Jajka (10szt)", 12.50, KAT_NABIAL, 600.0},
-    {"Jablka", 3.00, KAT_OWOCE, 1000.0},
-    {"Banany", 4.50, KAT_OWOCE, 1000.0},
-    {"Ziemniaki", 2.00, KAT_WARZYWA, 1000.0},
-    {"Pomidory", 8.00, KAT_WARZYWA, 500.0},
-    {"Szynka", 45.00, KAT_WEDLINY, 500.0},
-    {"Kielbasa", 25.00, KAT_WEDLINY, 400.0},
-    {"Woda 1.5L", 2.00, KAT_NAPOJE, 1500.0},
-    {"Cola", 6.00, KAT_NAPOJE, 1000.0},
-    {"Guma do zucia", 3.00, KAT_SLODYCZE, 20.0},
-    {"Czekolada", 5.00, KAT_SLODYCZE, 100.0},
-    {"Chipsy", 6.50, KAT_SLODYCZE, 150.0},
-    {"Piwo Jasne", 4.50, KAT_ALKOHOL, 500.0},
-    {"Wino Czerwone", 25.00, KAT_ALKOHOL, 750.0},
-    {"Wodka 0.5L", 35.00, KAT_ALKOHOL, 900.0}
-};
-static const int LICZBA_PRODUKTOW_W_BAZIE = sizeof(BAZA_PRODUKTOW) / sizeof(Produkt);
-
 // Sprawdzenie czy kategoria istnieje w koszyku
 static int CzyMaKategorie(const Klient* k, KategoriaProduktu kat) {
     if (!k) return 0;
@@ -70,15 +46,15 @@ void UsunKlienta(Klient* k) {
     }
 }
 
-void DodajLosowyProdukt(Klient* k) {
-    if (!k || k->liczba_produktow >= k->ilosc_planowana) return;
+void DodajLosowyProdukt(Klient* k, const StanSklepu* stan_sklepu) {
+    if (!k || !stan_sklepu || k->liczba_produktow >= k->ilosc_planowana) return;
     
-    int indeks = rand() % LICZBA_PRODUKTOW_W_BAZIE;
-    k->koszyk[k->liczba_produktow++] = BAZA_PRODUKTOW[indeks];
+    int indeks = rand() % stan_sklepu->liczba_produktow;
+    k->koszyk[k->liczba_produktow++] = stan_sklepu->magazyn[indeks].produkt;
 }
 
-void ZrobZakupy(Klient* k) {
-    if (!k || !k->koszyk) return;
+void ZrobZakupy(Klient* k, const StanSklepu* stan_sklepu) {
+    if (!k || !k->koszyk || !stan_sklepu) return;
 
     // Po prostu wypełniamy koszyk do zaplanowanej ilości
     while (k->liczba_produktow < k->ilosc_planowana) {
@@ -90,13 +66,13 @@ void ZrobZakupy(Klient* k) {
         // Wybór produktu (różnorodność)
         int indeks = 0;
         for (int proby = 0; proby < 20; proby++) {
-            indeks = rand() % LICZBA_PRODUKTOW_W_BAZIE;
-            if (!CzyMaKategorie(k, BAZA_PRODUKTOW[indeks].kategoria)) {
+            indeks = rand() % stan_sklepu->liczba_produktow;
+            if (!CzyMaKategorie(k, stan_sklepu->magazyn[indeks].produkt.kategoria)) {
                 break;
             }
         }
         
-        k->koszyk[k->liczba_produktow++] = BAZA_PRODUKTOW[indeks];
+        k->koszyk[k->liczba_produktow++] = stan_sklepu->magazyn[indeks].produkt;
     }
 }
 

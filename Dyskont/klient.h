@@ -5,27 +5,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
-
-// Kategorie produktów
-typedef enum {
-    KAT_OWOCE,
-    KAT_WARZYWA,
-    KAT_PIECZYWO,
-    KAT_NABIAL,
-    KAT_ALKOHOL,
-    KAT_WEDLINY,
-    KAT_NAPOJE,
-    KAT_SLODYCZE,
-    KAT_INNE
-} KategoriaProduktu;
-
-// Struktura produktu
-typedef struct {
-    char nazwa[50];
-    double cena;
-    KategoriaProduktu kategoria;
-    double waga; // w gramach
-} Produkt;
+#include "pamiec_wspoldzielona.h"  // Dla Produkt, KategoriaProduktu, StanSklepu
 
 // Stany, w jakich może znajdować się klient
 typedef enum {
@@ -58,8 +38,8 @@ Klient* StworzKlienta(int id);
 void UsunKlienta(Klient* k);
 
 // Funkcje operacyjne
-void DodajLosowyProdukt(Klient* k);
-void ZrobZakupy(Klient* k);
+void DodajLosowyProdukt(Klient* k, const StanSklepu* stan_sklepu);
+void ZrobZakupy(Klient* k, const StanSklepu* stan_sklepu);
 int CzyZawieraAlkohol(const Klient* k);
 double ObliczSumeKoszyka(const Klient* k);
 

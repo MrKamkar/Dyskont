@@ -1,0 +1,156 @@
+#include "pamiec_wspoldzielona.h"
+#include <errno.h>
+
+// Funkcja inicjalizująca pamięć współdzieloną
+StanSklepu* InicjalizujPamiecWspoldzielona(const char* sciezka) {
+    // Generowanie klucza dla pamięci współdzielonej
+    key_t klucz = ftok(sciezka, 'S');
+    if (klucz == -1) {
+        perror("Blad generowania klucza");
+        exit(1);
+    }
+
+    // Utworzenie segmentu pamięci współdzielonej
+    int shm_id = shmget(klucz, sizeof(StanSklepu), IPC_CREAT | 0600);
+    if (shm_id == -1) {
+        perror("Blad utworzenia segmentu pamieci dzielonej");
+        exit(1);
+    }
+
+    // Dołączenie segmentu do przestrzeni adresowej procesu
+    StanSklepu* stan = (StanSklepu*)shmat(shm_id, NULL, 0);
+    if (stan == (void*)-1) {
+        perror("Blad dolaczenia pamieci dzielonej");
+        exit(1);
+    }
+
+    // Czyszczenie
+    WyczyscStanSklepu(stan);
+
+    return stan;
+}
+
+// Funkcja dołączająca do istniejącej pamięci współdzielonej
+StanSklepu* DolaczPamiecWspoldzielona(const char* sciezka) {
+    // Generowanie tego samego klucza
+    key_t klucz = ftok(sciezka, 'S');
+    if (klucz == -1) {
+        perror("Blad generowania klucza");
+        exit(1);
+    }
+
+    // Pobranie ID istniejącego segmentu
+    int shm_id = shmget(klucz, sizeof(StanSklepu), 0600);
+    if (shm_id == -1) {
+        perror("Blad uzyskania ID pamieci dzielonej");
+        exit(1);
+    }
+
+    // Dołączenie do przestrzeni adresowej
+    StanSklepu* stan = (StanSklepu*)shmat(shm_id, NULL, 0);
+    if (stan == (void*)-1) {
+        perror("Blad dolaczenia do pamieci dzielonej");
+        exit(1);
+    }
+
+    return stan;
+}
+
+// Odłączenie od pamięci współdzielonej
+void OdlaczPamiecWspoldzielona(StanSklepu* stan) {
+    if (stan == NULL) return;
+
+    if (shmdt(stan) == -1) {
+        perror("Blad odlaczenia pamieci dzielonej");
+    }
+}
+
+// Usunięcie pamięci współdzielonej wywoływane przez główny proces
+void UsunPamiecWspoldzielona(const char* sciezka) {
+    key_t klucz = ftok(sciezka, 'S');
+    if (klucz == -1) {
+        perror("Blad generowania klucza");
+        return;
+    }
+
+    int shm_id = shmget(klucz, sizeof(StanSklepu), 0600);
+    if (shm_id == -1) {
+        perror("Blad uzyskania ID pamieci dzielonej");
+        return;
+    }
+
+    // Usunięcie segmentu
+    if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
+        perror("Blad usuniecia segmentu pamieci");
+    }
+}
+
+// Statyczne dane inicjalizacyjne dla produktów
+static const struct {
+    Produkt dane;
+    int ilosc_poczatkowa;
+} DANE_PRODUKTOW[] = {
+    { {"Chleb", 3.50, KAT_PIECZYWO, 500.0}, 20 },
+    { {"Bulka", 0.80, KAT_PIECZYWO, 60.0}, 100 },
+    { {"Mleko", 4.20, KAT_NABIAL, 1000.0}, 50 },
+    { {"Jogurt", 2.10, KAT_NABIAL, 150.0}, 60 },
+    { {"Jajka (10szt)", 12.50, KAT_NABIAL, 600.0}, 30 },
+    { {"Jablka", 3.00, KAT_OWOCE, 1000.0}, 80 },
+    { {"Banany", 4.50, KAT_OWOCE, 1000.0}, 60 },
+    { {"Ziemniaki", 2.00, KAT_WARZYWA, 1000.0}, 150 },
+    { {"Pomidory", 8.00, KAT_WARZYWA, 500.0}, 40 },
+    { {"Szynka", 45.00, KAT_WEDLINY, 500.0}, 25 },
+    { {"Kielbasa", 25.00, KAT_WEDLINY, 400.0}, 35 },
+    { {"Woda 1.5L", 2.00, KAT_NAPOJE, 1500.0}, 100 },
+    { {"Cola", 6.00, KAT_NAPOJE, 1000.0}, 70 },
+    { {"Guma do zucia", 3.00, KAT_SLODYCZE, 20.0}, 200 },
+    { {"Czekolada", 5.00, KAT_SLODYCZE, 100.0}, 80 },
+    { {"Chipsy", 6.50, KAT_SLODYCZE, 150.0}, 50 },
+    { {"Piwo Jasne", 4.50, KAT_ALKOHOL, 500.0}, 120 },
+    { {"Wino Czerwone", 25.00, KAT_ALKOHOL, 750.0}, 40 },
+    { {"Wodka 0.5L", 35.00, KAT_ALKOHOL, 900.0}, 30 }
+};
+
+// Czyszczenie struktury stanu
+void WyczyscStanSklepu(StanSklepu* stan) {
+    if (!stan) return;
+
+    // Wyzerowanie całej struktury
+    memset(stan, 0, sizeof(StanSklepu));
+
+    // Inicjalizacja kas samoobsługowych
+    for (int i = 0; i < LICZBA_KAS_SAMO; i++) {
+        stan->kasy_samo[i].stan = (i < MIN_KAS_SAMO_CZYNNYCH) ? KASA_WOLNA : KASA_ZAMKNIETA;
+        stan->kasy_samo[i].id_klienta = -1;
+        stan->kasy_samo[i].czas_rozpoczecia = 0;
+    }
+
+    // Inicjalizacja kas stacjonarnych
+    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
+        stan->kasy_stacjonarne[i].stan = KASA_ZAMKNIETA;
+        stan->kasy_stacjonarne[i].id_klienta = -1;
+        stan->kasy_stacjonarne[i].liczba_w_kolejce = 0;
+        stan->kasy_stacjonarne[i].czas_ostatniej_obslugi = 0;
+    }
+
+    // Inicjalizacja kolejki samoobsługowej
+    stan->liczba_w_kolejce_samo = 0;
+    for (int i = 0; i < MAX_KOLEJKA_SAMO; i++) {
+        stan->kolejka_samo[i] = -1;
+    }
+
+    // Inicjalizacja liczników
+    stan->liczba_klientow_w_sklepie = 0;
+    stan->liczba_czynnych_kas_samo = MIN_KAS_SAMO_CZYNNYCH;
+    stan->flaga_ewakuacji = 0;
+
+    // Inicjalizacja bazy produktów
+    stan->liczba_produktow = sizeof(DANE_PRODUKTOW) / sizeof(DANE_PRODUKTOW[0]);
+    for (int i = 0; i < stan->liczba_produktow; i++) {
+        stan->magazyn[i].produkt = DANE_PRODUKTOW[i].dane;
+        stan->magazyn[i].ilosc = DANE_PRODUKTOW[i].ilosc_poczatkowa;
+    }
+
+    // Zapisanie czasu startu
+    stan->czas_startu = time(NULL);
+}

@@ -3,11 +3,19 @@
 #include <time.h>
 #include "logi.h"
 #include "klient.h"
+#include "pamiec_wspoldzielona.h"
 
 int main(int argc, char* argv[]) {
     srand(time(NULL));
+    
+    // Inicjalizacja systemu logowania (najpierw!)
     InicjalizujSystemLogowania(argv[0]);
     UruchomProcesLogujacy();
+    
+    // Inicjalizacja pamięci współdzielonej
+    ZapiszLog(LOG_INFO, "Inicjalizacja pamieci wspoldzielonej...");
+    StanSklepu* stan_sklepu = InicjalizujPamiecWspoldzielona(argv[0]);
+    ZapiszLog(LOG_INFO, "Pamiec wspoldzielona zainicjalizowana pomyslnie.");
 
     ZapiszLog(LOG_INFO, "Start symulacji testowej klienta");
 
@@ -22,7 +30,7 @@ int main(int argc, char* argv[]) {
 
     // Symulacja zakupów
     ZapiszLog(LOG_INFO, "Klient rozpoczyna zakupy...");
-    ZrobZakupy(k1);
+    ZrobZakupy(k1, stan_sklepu);
     ZapiszLog(LOG_INFO, "Klient zakonczyl zakupy.");
 
     // Raport zawartości koszyka
@@ -52,6 +60,12 @@ int main(int argc, char* argv[]) {
     ZapiszLog(LOG_INFO, "Klient opuscil sklep.");
 
     ZapiszLog(LOG_INFO, "Koniec symulacji");
+    
+    // Czyszczenie pamięci współdzielonej
+    ZapiszLog(LOG_INFO, "Zwalnianie pamieci wspoldzielonej...");
+    OdlaczPamiecWspoldzielona(stan_sklepu);
+    UsunPamiecWspoldzielona(argv[0]);
+    
     ZamknijSystemLogowania();
 
     return 0;
