@@ -10,7 +10,7 @@
 #include <sys/ipc.h>
 #include <sys/msg.h>
 
-// Typy komunikatów logowania
+// Typy komunikatow logowania
 typedef enum {
     LOG_INFO,
     LOG_OSTRZEZENIE,

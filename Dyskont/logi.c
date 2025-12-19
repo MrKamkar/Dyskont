@@ -90,7 +90,6 @@ static void PetlaLoggera() {
 
 void InicjalizujSystemLogowania(const char* sciezka) {
     
-    // Generowanie klucza poprzez ftok przy pomocy sciezki do pliku wykonywalnego
     key_t klucz = ftok(sciezka, 65); // 'A' = 65
     if (klucz == -1) {
         perror("Blad generowania klucza");

@@ -9,7 +9,7 @@
 #include <string.h>
 #include <time.h>
 
-// Kategorie produktów
+// Kategorie produktow
 typedef enum {
     KAT_OWOCE,
     KAT_WARZYWA,
@@ -52,19 +52,19 @@ typedef enum {
     KASA_ZABLOKOWANA
 } StanKasy;
 
-// Struktura pojedynczej kasy samoobsługowej
+// Struktura pojedynczej kasy samoobslugowej
 typedef struct {
     StanKasy stan;
-    int id_klienta;           // ID obsługiwanego klienta (-1 jeśli wolna)
-    time_t czas_rozpoczecia;  // Czas rozpoczęcia obsługi
+    int id_klienta;           // ID obslugiwanego klienta (-1 jesli wolna)
+    time_t czas_rozpoczecia;  // Czas rozpoczecia obslugi
 } KasaSamoobslugowa;
 
 // Struktura kasy stacjonarnej
 typedef struct {
     StanKasy stan;
-    int id_klienta;                  // ID obsługiwanego klienta
-    int liczba_w_kolejce;            // Liczba osób czekających
-    int kolejka[MAX_KOLEJKA_STACJONARNA]; // ID klientów w kolejce
+    int id_klienta;                  // ID obslugiwanego klienta
+    int liczba_w_kolejce;            // Liczba osob czekajacych
+    int kolejka[MAX_KOLEJKA_STACJONARNA]; // ID klientow w kolejce
     time_t czas_ostatniej_obslugi;   // Dla mechanizmu auto-zamykania
 } KasaStacjonarna;
 
@@ -74,13 +74,13 @@ typedef struct {
     int ilosc;            // Liczba sztuk w magazynie
 } ProduktMagazyn;
 
-// Główna struktura stanu sklepu w pamięci współdzielonej
+// Glowna struktura stanu sklepu w pamieci wspoldzielonej
 typedef struct {
     // Kasy
     KasaSamoobslugowa kasy_samo[LICZBA_KAS_SAMO];
     KasaStacjonarna kasy_stacjonarne[LICZBA_KAS_STACJONARNYCH];
     
-    // Kolejka do kas samoobsługowych (wspólna)
+    // Kolejka do kas samoobslugowych (wspolna)
     int kolejka_samo[MAX_KOLEJKA_SAMO];
     int liczba_w_kolejce_samo;
     
@@ -88,18 +88,18 @@ typedef struct {
     int liczba_klientow_w_sklepie;
     int liczba_czynnych_kas_samo;
     
-    // Baza produktów sklepu
+    // Baza produktow sklepu
     ProduktMagazyn magazyn[MAX_PRODUKTOW];
     int liczba_produktow;
     
     // Flagi kontrolne
-    int flaga_ewakuacji; // Sygnał 3 od kierownika
+    int flaga_ewakuacji; // Sygnal 3 od kierownika
     
     // Czas symulacji
     time_t czas_startu;
 } StanSklepu;
 
-// Funkcje zarządzające pamięcią współdzieloną
+// Funkcje zarzadzajace pamiecia wspoldzielona
 StanSklepu* InicjalizujPamiecWspoldzielona(const char* sciezka);
 StanSklepu* DolaczPamiecWspoldzielona(const char* sciezka);
 void OdlaczPamiecWspoldzielona(StanSklepu* stan);

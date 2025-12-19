@@ -1,23 +1,23 @@
 #include "pamiec_wspoldzielona.h"
 #include <errno.h>
 
-// Funkcja inicjalizująca pamięć współdzieloną
+// Funkcja inicjalizujaca pamiec wspoldzielona
 StanSklepu* InicjalizujPamiecWspoldzielona(const char* sciezka) {
-    // Generowanie klucza dla pamięci współdzielonej
+    // Generowanie klucza dla pamieci wspoldzielonej
     key_t klucz = ftok(sciezka, 'S');
     if (klucz == -1) {
         perror("Blad generowania klucza");
         exit(1);
     }
 
-    // Utworzenie segmentu pamięci współdzielonej
+    // Utworzenie segmentu pamieci wspoldzielonej
     int shm_id = shmget(klucz, sizeof(StanSklepu), IPC_CREAT | 0600);
     if (shm_id == -1) {
         perror("Blad utworzenia segmentu pamieci dzielonej");
         exit(1);
     }
 
-    // Dołączenie segmentu do przestrzeni adresowej procesu
+    // Dolaczenie segmentu do przestrzeni adresowej procesu
     StanSklepu* stan = (StanSklepu*)shmat(shm_id, NULL, 0);
     if (stan == (void*)-1) {
         perror("Blad dolaczenia pamieci dzielonej");
@@ -30,7 +30,7 @@ StanSklepu* InicjalizujPamiecWspoldzielona(const char* sciezka) {
     return stan;
 }
 
-// Funkcja dołączająca do istniejącej pamięci współdzielonej
+// Funkcja dolaczajaca do istniejacej pamieci wspoldzielonej
 StanSklepu* DolaczPamiecWspoldzielona(const char* sciezka) {
     // Generowanie tego samego klucza
     key_t klucz = ftok(sciezka, 'S');
@@ -39,14 +39,14 @@ StanSklepu* DolaczPamiecWspoldzielona(const char* sciezka) {
         exit(1);
     }
 
-    // Pobranie ID istniejącego segmentu
+    // Pobranie ID istniejacego segmentu
     int shm_id = shmget(klucz, sizeof(StanSklepu), 0600);
     if (shm_id == -1) {
         perror("Blad uzyskania ID pamieci dzielonej");
         exit(1);
     }
 
-    // Dołączenie do przestrzeni adresowej
+    // Dolaczenie do przestrzeni adresowej
     StanSklepu* stan = (StanSklepu*)shmat(shm_id, NULL, 0);
     if (stan == (void*)-1) {
         perror("Blad dolaczenia do pamieci dzielonej");
@@ -56,7 +56,7 @@ StanSklepu* DolaczPamiecWspoldzielona(const char* sciezka) {
     return stan;
 }
 
-// Odłączenie od pamięci współdzielonej
+// Odlaczenie od pamieci wspoldzielonej
 void OdlaczPamiecWspoldzielona(StanSklepu* stan) {
     if (stan == NULL) return;
 
@@ -65,7 +65,7 @@ void OdlaczPamiecWspoldzielona(StanSklepu* stan) {
     }
 }
 
-// Usunięcie pamięci współdzielonej wywoływane przez główny proces
+// Usuniecie pamieci wspoldzielonej wywolywane przez glowny proces
 void UsunPamiecWspoldzielona(const char* sciezka) {
     key_t klucz = ftok(sciezka, 'S');
     if (klucz == -1) {
@@ -79,13 +79,13 @@ void UsunPamiecWspoldzielona(const char* sciezka) {
         return;
     }
 
-    // Usunięcie segmentu
+    // Usuniecie segmentu
     if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
         perror("Blad usuniecia segmentu pamieci");
     }
 }
 
-// Statyczne dane inicjalizacyjne dla produktów
+// Statyczne dane inicjalizacyjne dla produktow
 static const struct {
     Produkt dane;
     int ilosc_poczatkowa;
@@ -115,10 +115,10 @@ static const struct {
 void WyczyscStanSklepu(StanSklepu* stan) {
     if (!stan) return;
 
-    // Wyzerowanie całej struktury
+    // Wyzerowanie calej struktury
     memset(stan, 0, sizeof(StanSklepu));
 
-    // Inicjalizacja kas samoobsługowych
+    // Inicjalizacja kas samoobslugowych
     for (int i = 0; i < LICZBA_KAS_SAMO; i++) {
         stan->kasy_samo[i].stan = (i < MIN_KAS_SAMO_CZYNNYCH) ? KASA_WOLNA : KASA_ZAMKNIETA;
         stan->kasy_samo[i].id_klienta = -1;
@@ -133,18 +133,18 @@ void WyczyscStanSklepu(StanSklepu* stan) {
         stan->kasy_stacjonarne[i].czas_ostatniej_obslugi = 0;
     }
 
-    // Inicjalizacja kolejki samoobsługowej
+    // Inicjalizacja kolejki samoobslugowej
     stan->liczba_w_kolejce_samo = 0;
     for (int i = 0; i < MAX_KOLEJKA_SAMO; i++) {
         stan->kolejka_samo[i] = -1;
     }
 
-    // Inicjalizacja liczników
+    // Inicjalizacja licznikow
     stan->liczba_klientow_w_sklepie = 0;
     stan->liczba_czynnych_kas_samo = MIN_KAS_SAMO_CZYNNYCH;
     stan->flaga_ewakuacji = 0;
 
-    // Inicjalizacja bazy produktów
+    // Inicjalizacja bazy produktow
     stan->liczba_produktow = sizeof(DANE_PRODUKTOW) / sizeof(DANE_PRODUKTOW[0]);
     for (int i = 0; i < stan->liczba_produktow; i++) {
         stan->magazyn[i].produkt = DANE_PRODUKTOW[i].dane;
