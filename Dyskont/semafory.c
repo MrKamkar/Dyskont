@@ -35,6 +35,22 @@ int InicjalizujSemafory(const char* sciezka) {
         return -1;
     }
 
+    // Semafor kasy stacjonarnej 1 (mutex binarny, wartosc poczatkowa = 1)
+    arg.val = 1;
+    if (semctl(sem_id, SEM_KASA_STACJONARNA_1, SETVAL, arg) == -1) {
+        perror("Blad inicjalizacji semafora kasy stacjonarnej 1");
+        semctl(sem_id, 0, IPC_RMID);
+        return -1;
+    }
+
+    // Semafor kasy stacjonarnej 2 (mutex binarny, wartosc poczatkowa = 1)
+    arg.val = 1;
+    if (semctl(sem_id, SEM_KASA_STACJONARNA_2, SETVAL, arg) == -1) {
+        perror("Blad inicjalizacji semafora kasy stacjonarnej 2");
+        semctl(sem_id, 0, IPC_RMID);
+        return -1;
+    }
+
     return sem_id;
 }
 

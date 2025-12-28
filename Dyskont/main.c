@@ -16,7 +16,7 @@ static char g_sciezka[256];
 
 // Handler sygnalu SIGINT - czyszczenie zasobow
 void ObslugaSIGINT(int sig) {
-    ZapiszLog(LOG_INFO, "Otrzymano SIGINT - rozpoczynam zamykanie systemu...");
+    ZapiszLog(LOG_INFO, "Otrzymano SIGINT - rozpoczynam zamykanie systemu..");
     
     // Zamkniecie systemu logowania
     ZamknijSystemLogowania();
@@ -46,17 +46,17 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, ObslugaSIGINT);
     
     // Inicjalizacja systemu logowania
-    printf("=== Dyskont Symulator - Manager Process ===\n");
+    printf("=== Symulacja Dyskontu ===\n");
     InicjalizujSystemLogowania(argv[0]);
     UruchomProcesLogujacy();
     
     // Inicjalizacja pamieci wspoldzielonej
-    ZapiszLog(LOG_INFO, "Inicjalizacja pamieci wspoldzielonej...");
+    ZapiszLog(LOG_INFO, "Inicjalizacja pamieci wspoldzielonej..");
     g_stan_sklepu = InicjalizujPamiecWspoldzielona(argv[0]);
     ZapiszLog(LOG_INFO, "Pamiec wspoldzielona zainicjalizowana pomyslnie.");
     
     // Inicjalizacja semaforow
-    ZapiszLog(LOG_INFO, "Inicjalizacja semaforow...");
+    ZapiszLog(LOG_INFO, "Inicjalizacja semaforow..");
     g_sem_id = InicjalizujSemafory(argv[0]);
     if (g_sem_id == -1) {
         ZapiszLog(LOG_BLAD, "Nie udalo sie zainicjalizowac semaforow!");
@@ -65,10 +65,40 @@ int main(int argc, char* argv[]) {
     }
     ZapiszLog(LOG_INFO, "Semafory zainicjalizowane pomyslnie.");
     
+    // Uruchomienie procesow kasjerow (2 kasy stacjonarne)
+    ZapiszLog(LOG_INFO, "Uruchamianie procesow kasjerow..");
+    pid_t pid_kasjerow[LICZBA_KAS_STACJONARNYCH];
+    
+    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
+        pid_t pid = fork();
+        
+        if (pid == -1) {
+            perror("Blad fork() dla kasjera");
+            ZapiszLog(LOG_BLAD, "Nie udalo sie stworzyc procesu kasjera!");
+            continue;
+        }
+        else if (pid == 0) {
+            // Proces dziecka - uruchomienie kasjera przez exec
+            char id_str[16];
+            sprintf(id_str, "%d", i);
+            
+            execl("./kasjer", "kasjer", argv[0], id_str, (char*)NULL);
+            
+            perror("Blad exec() dla kasjera");
+            exit(1);
+        }
+        else {
+            pid_kasjerow[i] = pid;
+            char buf[256];
+            sprintf(buf, "Uruchomiono proces kasjera [PID: %d, Kasa: %d]", pid, i + 1);
+            ZapiszLog(LOG_INFO, buf);
+        }
+    }
+    
     // Liczba klientow do utworzenia
-    int liczba_klientow = 5;
+    int liczba_klientow = 10;  // Zwiekszona liczba dla testu
     char buf[256];
-    sprintf(buf, "Uruchamianie %d procesow klientow...", liczba_klientow);
+    sprintf(buf, "Uruchamianie %d procesow klientow..", liczba_klientow);
     ZapiszLog(LOG_INFO, buf);
     
     // Tablica PID procesow klienckich
@@ -89,13 +119,6 @@ int main(int argc, char* argv[]) {
             char id_str[16];
             sprintf(id_str, "%d", i + 1);
             
-            // Sprawdzenie czy plik istnieje (dla lepszego debugowania)
-            if (access("./klient", F_OK | X_OK) == -1) {
-                perror("Blad: Nie znaleziono pliku wykonywalnego './klient' lub brak praw wykonywania");
-                exit(1);
-            }
-
-            // Wykonanie programu klienta
             execl("./klient", "klient", argv[0], id_str, (char*)NULL);
             
             // Jesli doszlismy tutaj, exec sie nie powiodl
@@ -114,25 +137,41 @@ int main(int argc, char* argv[]) {
     }
     
     // Oczekiwanie na zakonczenie wszystkich procesow klienckich
-    ZapiszLog(LOG_INFO, "Oczekiwanie na zakonczenie wszystkich klientow...");
+    ZapiszLog(LOG_INFO, "Oczekiwanie na zakonczenie wszystkich klientow..");
     for (int i = 0; i < liczba_klientow; i++) {
         int status;
         waitpid(pid_klientow[i], &status, 0);
         
         if (WIFEXITED(status)) {
+            int kod = WEXITSTATUS(status);
             sprintf(buf, "Proces klienta [PID: %d] zakonczyl sie z kodem: %d", 
-                    pid_klientow[i], WEXITSTATUS(status));
-            ZapiszLog(LOG_INFO, buf);
+                    pid_klientow[i], kod);
+            ZapiszLog(kod == 0 ? LOG_INFO : LOG_BLAD, buf);
         }
     }
     
     free(pid_klientow);
     
     ZapiszLog(LOG_INFO, "Wszystkie procesy klientow zakonczone.");
+    
+    // Ustawienie flagi ewakuacji dla kasjerow
+    ZapiszLog(LOG_INFO, "Zamykanie procesow kasjerow..");
+    ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    g_stan_sklepu->flaga_ewakuacji = 1;
+    ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    
+    // Oczekiwanie na zakonczenie procesow kasjerow
+    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
+        int status;
+        waitpid(pid_kasjerow[i], &status, 0);
+        sprintf(buf, "Proces kasjera [Kasa: %d] zakonczony.", i + 1);
+        ZapiszLog(LOG_INFO, buf);
+    }
+    
     ZapiszLog(LOG_INFO, "Koniec symulacji.");
     
     // Czyszczenie zasobow
-    ZapiszLog(LOG_INFO, "Zwalnianie zasobow IPC...");
+    ZapiszLog(LOG_INFO, "Zwalnianie zasobow IPC..");
     OdlaczPamiecWspoldzielona(g_stan_sklepu);
     UsunPamiecWspoldzielona(argv[0]);
     UsunSemafory(g_sem_id);

@@ -11,7 +11,9 @@
 // Indeksy semaforów w tablicy
 #define SEM_PAMIEC_WSPOLDZIELONA 0  // Semafor pamieci wspoldzielonej
 #define SEM_KOLEJKA_SAMO         1  // Semafor kolejki samoobsługowej
-#define SEM_LICZBA               2  // Liczba semaforów
+#define SEM_KASA_STACJONARNA_1   2  // Semafor dostępu do kolejki kasy 1
+#define SEM_KASA_STACJONARNA_2   3  // Semafor dostępu do kolejki kasy 2
+#define SEM_LICZBA               4  // Liczba semaforów
 
 // Struktura union wymagana przez semctl w niektórych systemach
 union semun {

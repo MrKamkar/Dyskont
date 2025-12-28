@@ -1,6 +1,7 @@
 #include "klient.h"
 #include "semafory.h"
 #include "logi.h"
+#include "kasjer.h"
 
 
 // Sprawdzenie czy kategoria istnieje w koszyku
@@ -146,12 +147,15 @@ int main(int argc, char* argv[]) {
     ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
 
     // Zakupy (bez sekcji krytycznej - tylko odczyt z magazynu)
-    ZapiszLog(LOG_INFO, "Klient rozpoczyna zakupy...");
+    ZapiszLog(LOG_INFO, "Klient rozpoczyna zakupy..");
     ZrobZakupy(klient, stan_sklepu);
     
     sprintf(buf, "Klient [ID: %d] zakonczyl zakupy. Produktow w koszyku: %d, Laczna kwota: %.2f PLN", 
             klient->id, klient->liczba_produktow, ObliczSumeKoszyka(klient));
     ZapiszLog(LOG_INFO, buf);
+
+    // Flaga czy klient moze dokonac zakupu
+    int moze_kupic = 1;
 
     // Weryfikacja alkoholu
     if (CzyZawieraAlkohol(klient)) {
@@ -159,12 +163,57 @@ int main(int argc, char* argv[]) {
             sprintf(buf, "ALARM: Klient [ID: %d] niepelnoletni (wiek: %d) probuje kupic alkohol!", 
                     klient->id, klient->wiek);
             ZapiszLog(LOG_BLAD, buf);
+            // Niepelnoletni - nie moze kupic, wychodzi
+            moze_kupic = 0;
         } else {
             sprintf(buf, "Klient [ID: %d]: Weryfikacja wieku OK (wiek: %d)", klient->id, klient->wiek);
             ZapiszLog(LOG_INFO, buf);
         }
     }
 
+    // Jesli klient moze kupic, idzie do kasy stacjonarnej
+    if (moze_kupic) {
+        sprintf(buf, "Klient [ID: %d] wybiera kase stacjonarna.", klient->id);
+        ZapiszLog(LOG_INFO, buf);
+        
+        // Sprawdz czy kasa 1 jest otwarta, jesli nie - otworz gdy > 3 osoby czeka
+        ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        StanKasy stan_kasy1 = stan_sklepu->kasy_stacjonarne[0].stan;
+        int w_kolejce = stan_sklepu->kasy_stacjonarne[0].liczba_w_kolejce;
+        
+        // Jesli > 3 osoby w kolejce i kasa zamknieta, otworz ja
+        if (stan_kasy1 == KASA_ZAMKNIETA && w_kolejce >= 3) {
+            stan_sklepu->kasy_stacjonarne[0].stan = KASA_WOLNA;
+            stan_sklepu->kasy_stacjonarne[0].czas_ostatniej_obslugi = time(NULL);
+            ZapiszLog(LOG_INFO, "Kasa stacjonarna 1 zostala otwarta (> 3 osoby czekaja).");
+        }
+        ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        
+        // Dolacz do kolejki kasy 1
+        klient->stan = STAN_KOLEJKA_KASA_1;
+        klient->czas_dolaczenia_do_kolejki = time(NULL);
+        
+        if (DodajDoKolejkiStacjonarnej(0, klient->id, stan_sklepu, sem_id) == 0) {
+            sprintf(buf, "Klient [ID: %d] dolaczyl do kolejki kasy stacjonarnej 1.", klient->id);
+            ZapiszLog(LOG_INFO, buf);
+            
+            // Czekaj na obsluge (symulacja - w pelnej wersji klient czekalby na sygnal od kasjera)
+            int czas_oczekiwania = 2 + (rand() % 5); // 2-6 sekund
+            sleep(czas_oczekiwania);
+            
+            klient->stan = STAN_PRZY_KASIE;
+            
+            sprintf(buf, "Klient [ID: %d] zostal obsluzony przy kasie stacjonarnej. Suma: %.2f PLN",
+                    klient->id, ObliczSumeKoszyka(klient));
+            ZapiszLog(LOG_INFO, buf);
+        } else {
+            sprintf(buf, "Klient [ID: %d]: Kolejka pelna! Nie moze dokonac zakupu.", klient->id);
+            ZapiszLog(LOG_OSTRZEZENIE, buf);
+        }
+    }
+    
+    klient->stan = STAN_WYJSCIE;
+    
     // Sekcja krytyczna - zmniejszenie licznika klientow
     ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
     stan_sklepu->liczba_klientow_w_sklepie--;
@@ -173,11 +222,14 @@ int main(int argc, char* argv[]) {
     sprintf(buf, "Klient [ID: %d] opuscil sklep.", klient->id);
     ZapiszLog(LOG_INFO, buf);
 
+    // Kod wyjscia: 0 = sukces, 1 = odmowa (np. niepelnoletni z alkoholem)
+    int kod_wyjscia = moze_kupic ? 0 : 1;
+
     // Czyszczenie
     UsunKlienta(klient);
     OdlaczPamiecWspoldzielona(stan_sklepu);
 
-    return 0;
+    return kod_wyjscia;
 }
 #endif
 
