@@ -9,7 +9,7 @@
 #include <string.h>
 #include <time.h>
 
-// Kategorie produktow
+//Kategorie produktow
 typedef enum {
     KAT_OWOCE,
     KAT_WARZYWA,
@@ -22,29 +22,29 @@ typedef enum {
     KAT_INNE
 } KategoriaProduktu;
 
-// Struktura produktu
+//Struktura produktu
 typedef struct {
     char nazwa[50];
     double cena;
     KategoriaProduktu kategoria;
-    double waga; // w gramach (dla pojedynczej sztuki)
+    double waga; //w gramach (dla pojedynczej sztuki)
 } Produkt;
 
-// Maksymalne rozmiary
+//Maksymalne rozmiary
 #define MAX_KOLEJKA_SAMO 100
 #define MAX_KOLEJKA_STACJONARNA 50
 #define MAX_PRODUKTOW 50
 
-// Liczba kas
+//Liczba kas
 #define LICZBA_KAS_SAMO 6
 #define LICZBA_KAS_STACJONARNYCH 2
 
-// Parametry symulacji
+//Parametry symulacji
 #define MIN_KAS_SAMO_CZYNNYCH 3
-#define KLIENCI_NA_KASE 5  // Parametr K z opisu
-#define MAX_CZAS_OCZEKIWANIA 30 // T w sekundach
+#define KLIENCI_NA_KASE 5  //Parametr K z opisu
+#define MAX_CZAS_OCZEKIWANIA 30 //T w sekundach
 
-// Stany kas
+//Stany kas
 typedef enum {
     KASA_ZAMKNIETA,
     KASA_WOLNA,
@@ -52,60 +52,60 @@ typedef enum {
     KASA_ZABLOKOWANA
 } StanKasy;
 
-// Struktura pojedynczej kasy samoobslugowej
+//Struktura pojedynczej kasy samoobslugowej
 typedef struct {
     StanKasy stan;
-    int id_klienta;           // ID obslugiwanego klienta (-1 jesli wolna)
-    time_t czas_rozpoczecia;  // Czas rozpoczecia obslugi
+    int id_klienta;           //ID obslugiwanego klienta (-1 jesli wolna)
+    time_t czas_rozpoczecia;  //Czas rozpoczecia obslugi
 } KasaSamoobslugowa;
 
-// Struktura kasy stacjonarnej
+//Struktura kasy stacjonarnej
 typedef struct {
     StanKasy stan;
-    int id_klienta;                  // ID obslugiwanego klienta
-    int liczba_w_kolejce;            // Liczba osob czekajacych
-    int kolejka[MAX_KOLEJKA_STACJONARNA]; // ID klientow w kolejce
-    time_t czas_ostatniej_obslugi;   // Dla mechanizmu auto-zamykania
+    int id_klienta;                  //ID obslugiwanego klienta
+    int liczba_w_kolejce;            //Liczba osob czekajacych
+    int kolejka[MAX_KOLEJKA_STACJONARNA]; //ID klientow w kolejce
+    time_t czas_ostatniej_obslugi;   //Dla mechanizmu auto-zamykania
 } KasaStacjonarna;
 
-// Produkt z stanem magazynowym
+//Produkt z stanem magazynowym
 typedef struct {
-    Produkt produkt;      // Dane produktu (nazwa, cena, kategoria, waga)
-    int ilosc;            // Liczba sztuk w magazynie
+    Produkt produkt;      //Dane produktu (nazwa, cena, kategoria, waga)
+    int ilosc;            //Liczba sztuk w magazynie
 } ProduktMagazyn;
 
-// Glowna struktura stanu sklepu w pamieci wspoldzielonej
+//Glowna struktura stanu sklepu w pamieci wspoldzielonej
 typedef struct {
-    // Kasy
+    //Kasy
     KasaSamoobslugowa kasy_samo[LICZBA_KAS_SAMO];
     KasaStacjonarna kasy_stacjonarne[LICZBA_KAS_STACJONARNYCH];
     
-    // Kolejka do kas samoobslugowych (wspolna)
+    //Kolejka do kas samoobslugowych (wspolna)
     int kolejka_samo[MAX_KOLEJKA_SAMO];
     int liczba_w_kolejce_samo;
     
-    // Liczniki
+    //Liczniki
     int liczba_klientow_w_sklepie;
     int liczba_czynnych_kas_samo;
     
-    // Baza produktow sklepu
+    //Baza produktow sklepu
     ProduktMagazyn magazyn[MAX_PRODUKTOW];
     int liczba_produktow;
     
-    // Flagi kontrolne
-    int flaga_ewakuacji; // Sygnal 3 od kierownika
+    //Flagi kontrolne
+    int flaga_ewakuacji; //Sygnal 3 od kierownika
     
-    // Czas symulacji
+    //Czas symulacji
     time_t czas_startu;
 } StanSklepu;
 
-// Funkcje zarzadzajace pamiecia wspoldzielona
+//Funkcje zarzadzajace pamiecia wspoldzielona
 StanSklepu* InicjalizujPamiecWspoldzielona(const char* sciezka);
 StanSklepu* DolaczPamiecWspoldzielona(const char* sciezka);
 void OdlaczPamiecWspoldzielona(StanSklepu* stan);
 void UsunPamiecWspoldzielona(const char* sciezka);
 
-// Funkcje pomocnicze
+//Funkcje pomocnicze
 void WyczyscStanSklepu(StanSklepu* stan);
 
 #endif

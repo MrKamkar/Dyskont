@@ -6,11 +6,11 @@
 static int id_kolejki = -1;
 static pid_t pid_loggera = -1;
 
-// Petla procesu logujacego
+//Petla procesu logujacego
 static void PetlaLoggera() {
     mkdir("logs", 0700);
     
-    // Pobranie aktualnego czasu
+    //Pobranie aktualnego czasu
     time_t teraz = time(NULL);
     struct tm *czas = localtime(&teraz);
     
@@ -35,12 +35,12 @@ static void PetlaLoggera() {
             break;
         }
 
-        // Sprawdzenie czy to sygnal konca
+        //Sprawdzenie czy to sygnal konca
         if (msg.typ_komunikatu == TYP_KONIEC) {
             break; 
         }
 
-        // Logika formatowania
+        //Logika formatowania
         const char* prefix = "";
         const char* kolor = KOLOR_RESET;
         
@@ -66,17 +66,17 @@ static void PetlaLoggera() {
                 break;
         }
 
-        // Czas
+        //Czas
         teraz = time(NULL);
         czas = localtime(&teraz);
 
         char czas_buf[16];
         sprintf(czas_buf, "[%02d:%02d:%02d] ", czas->tm_hour, czas->tm_min, czas->tm_sec);
 
-        // Wyjscie na ekran z kolorami
+        //Wyjscie na ekran z kolorami
         printf("%s%s%s%s%s\n", czas_buf, kolor, prefix, msg.tresc, KOLOR_RESET);
 
-        // Zapis do pliku
+        //Zapis do pliku
         char bufor_pliku[512];
         sprintf(bufor_pliku, "%s%s%s\n", czas_buf, prefix, msg.tresc);
         if (write(deskryptor_pliku, bufor_pliku, strlen(bufor_pliku)) == -1) {
@@ -90,13 +90,13 @@ static void PetlaLoggera() {
 
 void InicjalizujSystemLogowania(const char* sciezka) {
     
-    key_t klucz = ftok(sciezka, 65); // 'A' = 65
+    key_t klucz = ftok(sciezka, 65); //'A' = 65
     if (klucz == -1) {
         perror("Blad generowania klucza");
         exit(1);
     }
 
-    // Inicjalizacja IPC
+    //Inicjalizacja IPC
     id_kolejki = msgget(klucz, IPC_CREAT | 0600);
     if (id_kolejki == -1) {
         perror("Blad tworzenia kolejki komunikatow");
@@ -111,24 +111,24 @@ void UruchomProcesLogujacy() {
         exit(1);
     }
     if (pid_loggera == 0) {
-        PetlaLoggera(); // Proces potomny
+        PetlaLoggera(); //Proces potomny
     }
 }
 
 void ZamknijSystemLogowania() {
-    // Wyslanie komunikatu o zakonczeniu
+    //Wyslanie komunikatu o zakonczeniu
     struct KomunikatLog msg;
     msg.typ_komunikatu = TYP_KONIEC;
     msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0);
 
-    // Czekanie na zakonczenie procesu loggera
+    //Czekanie na zakonczenie procesu loggera
     if (pid_loggera != -1) {
         if (waitpid(pid_loggera, NULL, 0) == -1) {
             perror("Blad waitpid");
         }
     }
 
-    // Usuniecie kolejki
+    //Usuniecie kolejki
     if (msgctl(id_kolejki, IPC_RMID, NULL) == -1) {
         perror("Blad usuwania kolejki");
     }
@@ -138,12 +138,12 @@ void ZapiszLog(TypLogu typ_logu, const char* format) {
     if (id_kolejki == -1) return;
 
     struct KomunikatLog msg;
-    msg.typ_komunikatu = 1; // Zwykly komunikat
+    msg.typ_komunikatu = 1; //Zwykly komunikat
     msg.typ_logu = typ_logu;
     strncpy(msg.tresc, format, 255);
     msg.tresc[255] = '\0';
 
-    // Wyslanie do kolejki
+    //Wyslanie do kolejki
     if (msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
         perror("Blad msgsnd");
     }

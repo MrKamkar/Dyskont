@@ -5,9 +5,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
-#include "pamiec_wspoldzielona.h"  // Dla Produkt, KategoriaProduktu, StanSklepu
+#include "pamiec_wspoldzielona.h"  //Dla Produkt, KategoriaProduktu, StanSklepu
 
-// Stany, w jakich może znajdować się klient
+//Stany, w jakich może znajdować się klient
 typedef enum {
     STAN_ZAKUPY,
     STAN_KOLEJKA_SAMOOBSLUGOWA,
@@ -17,27 +17,27 @@ typedef enum {
     STAN_WYJSCIE
 } StanKlienta;
 
-// Główna struktura klienta
+//Główna struktura klienta
 typedef struct {
     int id;
     int wiek;
     
-    // Koszyk (tabela o stałym rozmiarze ustalonym przy wejściu)
+    //Koszyk (tabela o stałym rozmiarze ustalonym przy wejściu)
     Produkt* koszyk;
-    int liczba_produktow;  // Aktualnie w koszyku
-    int ilosc_planowana;   // Ile zamierza kupić (rozmiar bufora)
+    int liczba_produktow;  //Aktualnie w koszyku
+    int ilosc_planowana;   //Ile zamierza kupić (rozmiar bufora)
     
-    // Czas
+    //Czas
     time_t czas_dolaczenia_do_kolejki;
     
     StanKlienta stan;
 } Klient;
 
-// Funkcje zarządzające cyklem życia klienta
+//Funkcje zarządzające cyklem życia klienta
 Klient* StworzKlienta(int id);
 void UsunKlienta(Klient* k);
 
-// Funkcje operacyjne
+//Funkcje operacyjne
 void DodajLosowyProdukt(Klient* k, const StanSklepu* stan_sklepu);
 void ZrobZakupy(Klient* k, const StanSklepu* stan_sklepu);
 int CzyZawieraAlkohol(const Klient* k);

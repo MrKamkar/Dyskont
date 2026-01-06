@@ -1,0 +1,182 @@
+#include "pracownik_obslugi.h"
+#include "semafory.h"
+#include "logi.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+
+//Inicjalizacja FIFO - tworzy lacze nazwane
+int InicjalizujFifoObslugi() {
+    //Usun istniejace FIFO jesli jest
+    unlink(FIFO_OBSLUGA);
+    
+    //Utworz nowe FIFO z prawami odczytu/zapisu
+    if (mkfifo(FIFO_OBSLUGA, 0666) == -1) {
+        if (errno != EEXIST) {
+            perror("Blad tworzenia FIFO obslugi");
+            return -1;
+        }
+    }
+    
+    return 0;
+}
+
+//Usuniecie FIFO
+void UsunFifoObslugi() {
+    if (unlink(FIFO_OBSLUGA) == -1) {
+        perror("Blad usuwania FIFO obslugi");
+    }
+}
+
+//Wysylanie zadania do pracownika przez FIFO
+int WyslijZadanieObslugi(ZadanieObslugi* zadanie) {
+    if (!zadanie) return -1;
+    
+    //Otwarcie FIFO do zapisu (nieblokujace)
+    int fd = open(FIFO_OBSLUGA, O_WRONLY | O_NONBLOCK);
+    if (fd == -1) {
+        perror("Blad otwarcia FIFO do zapisu");
+        return -1;
+    }
+    
+    //Zapis struktury zadania
+    ssize_t napisano = write(fd, zadanie, sizeof(ZadanieObslugi));
+    if (napisano == -1) {
+        perror("Blad zapisu do FIFO");
+        close(fd);
+        return -1;
+    }
+    
+    close(fd);
+    return 0;
+}
+
+//Odbieranie zadania przez pracownika
+int OdbierzZadanieObslugi(ZadanieObslugi* zadanie) {
+    if (!zadanie) return -1;
+    
+    //Otwarcie FIFO do odczytu (blokujace)
+    int fd = open(FIFO_OBSLUGA, O_RDONLY);
+    if (fd == -1) {
+        perror("Blad otwarcia FIFO do odczytu");
+        return -1;
+    }
+    
+    //Odczyt struktury zadania
+    ssize_t przeczytano = read(fd, zadanie, sizeof(ZadanieObslugi));
+    if (przeczytano <= 0) {
+        close(fd);
+        return -1;
+    }
+    
+    close(fd);
+    return 0;
+}
+
+//Glowna funkcja procesu pracownika obslugi
+#ifdef PRACOWNIK_STANDALONE
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Uzycie: %s <sciezka>\n", argv[0]);
+        return 1;
+    }
+    
+    const char* sciezka = argv[1];
+    
+    //Dolaczenie do pamieci wspoldzielonej
+    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona(sciezka);
+    if (!stan_sklepu) {
+        fprintf(stderr, "Pracownik: Nie mozna dolaczyc do pamieci wspoldzielonej\n");
+        return 1;
+    }
+    
+    //Dolaczenie do semaforow
+    int sem_id = DolaczSemafory(sciezka);
+    if (sem_id == -1) {
+        fprintf(stderr, "Pracownik: Nie mozna dolaczyc do semaforow\n");
+        OdlaczPamiecWspoldzielona(stan_sklepu);
+        return 1;
+    }
+    
+    ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na FIFO...");
+    
+    char buf[256];
+    
+    //Otwarcie FIFO do odczytu (nieblokujace - pozwala sprawdzac flage ewakuacji)
+    int fd = open(FIFO_OBSLUGA, O_RDONLY | O_NONBLOCK);
+    if (fd == -1) {
+        perror("Pracownik: Blad otwarcia FIFO");
+        OdlaczPamiecWspoldzielona(stan_sklepu);
+        return 1;
+    }
+    
+    //Glowna petla pracownika
+    while (1) {
+        //Sprawdzenie flagi ewakuacji
+        if (stan_sklepu->flaga_ewakuacji) {
+            ZapiszLog(LOG_INFO, "Pracownik obslugi: Ewakuacja - koncze prace.");
+            break;
+        }
+        
+        ZadanieObslugi zadanie;
+        ssize_t przeczytano = read(fd, &zadanie, sizeof(ZadanieObslugi));
+        
+        if (przeczytano == sizeof(ZadanieObslugi)) {
+            //Przetworzenie zadania
+            switch (zadanie.typ) {
+                case ZADANIE_ODBLOKUJ_KASE:
+                    sprintf(buf, "Pracownik obslugi: Odblokowuje kase samo [%d] dla klienta [%d]",
+                            zadanie.id_kasy + 1, zadanie.id_klienta);
+                    ZapiszLog(LOG_INFO, buf);
+                    
+                    //Symulacja czasu interwencji
+                    usleep(500000); //500ms
+                    
+                    //Odblokowanie kasy w pamieci wspoldzielonej
+                    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                    if (stan_sklepu->kasy_samo[zadanie.id_kasy].stan == KASA_ZABLOKOWANA) {
+                        stan_sklepu->kasy_samo[zadanie.id_kasy].stan = KASA_ZAJETA;
+                    }
+                    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                    
+                    sprintf(buf, "Pracownik obslugi: Kasa samo [%d] odblokowana.", zadanie.id_kasy + 1);
+                    ZapiszLog(LOG_INFO, buf);
+                    break;
+                    
+                case ZADANIE_WERYFIKUJ_WIEK:
+                    sprintf(buf, "Pracownik obslugi: Weryfikacja wieku klienta [%d], wiek: %d",
+                            zadanie.id_klienta, zadanie.wiek_klienta);
+                    ZapiszLog(LOG_INFO, buf);
+                    
+                    //Symulacja weryfikacji
+                    usleep(300000); //300ms
+                    
+                    if (zadanie.wiek_klienta >= 18) {
+                        sprintf(buf, "Pracownik obslugi: Wiek OK - klient [%d] moze kupic alkohol.",
+                                zadanie.id_klienta);
+                        ZapiszLog(LOG_INFO, buf);
+                    } else {
+                        sprintf(buf, "Pracownik obslugi: ODMOWA - klient [%d] niepelnoletni!",
+                                zadanie.id_klienta);
+                        ZapiszLog(LOG_BLAD, buf);
+                    }
+                    break;
+            }
+        } else if (przeczytano == 0) {
+            //Koniec danych - ponowne otwarcie FIFO (nieblokujace)
+            close(fd);
+            fd = open(FIFO_OBSLUGA, O_RDONLY | O_NONBLOCK);
+            if (fd == -1) break;
+        }
+        //Jesli przeczytano == -1 i errno == EAGAIN to brak danych - kontynuuj
+        
+        usleep(100000); //100ms
+    }
+    
+    close(fd);
+    OdlaczPamiecWspoldzielona(stan_sklepu);
+    
+    return 0;
+}
+#endif

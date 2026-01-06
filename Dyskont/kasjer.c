@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Tworzy nowego kasjera
+//Tworzy nowego kasjera
 Kasjer* StworzKasjera(int id_kasy) {
     if (id_kasy < 0 || id_kasy >= LICZBA_KAS_STACJONARNYCH) {
         return NULL;
@@ -21,20 +21,20 @@ Kasjer* StworzKasjera(int id_kasy) {
     return kasjer;
 }
 
-// Usuwa kasjera
+//Usuwa kasjera
 void UsunKasjera(Kasjer* kasjer) {
     if (kasjer) {
         free(kasjer);
     }
 }
 
-// Pobiera klienta z kolejki do kasy stacjonarnej
+//Pobiera klienta z kolejki do kasy stacjonarnej
 int PobierzKlientaZKolejki(int id_kasy, StanSklepu* stan, int sem_id) {
     if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_STACJONARNYCH) {
         return -1;
     }
     
-    // Wybor odpowiedniego semafora
+    //Wybor odpowiedniego semafora
     int sem_num = (id_kasy == 0) ? SEM_KASA_STACJONARNA_1 : SEM_KASA_STACJONARNA_2;
     
     ZajmijSemafor(sem_id, sem_num);
@@ -45,7 +45,7 @@ int PobierzKlientaZKolejki(int id_kasy, StanSklepu* stan, int sem_id) {
     if (kasa->liczba_w_kolejce > 0) {
         id_klienta = kasa->kolejka[0];
         
-        // Przesuniecie kolejki FIFO
+        //Przesuniecie kolejki FIFO
         for (int i = 0; i < kasa->liczba_w_kolejce - 1; i++) {
             kasa->kolejka[i] = kasa->kolejka[i + 1];
         }
@@ -57,7 +57,7 @@ int PobierzKlientaZKolejki(int id_kasy, StanSklepu* stan, int sem_id) {
     return id_klienta;
 }
 
-// Dodaje klienta do kolejki kasy stacjonarnej
+//Dodaje klienta do kolejki kasy stacjonarnej
 int DodajDoKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
     if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_STACJONARNYCH) {
         return -1;
@@ -81,7 +81,7 @@ int DodajDoKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, in
     return wynik;
 }
 
-// Obsluga klienta przez kasjera
+//Obsluga klienta przez kasjera
 void ObsluzKlienta(Kasjer* kasjer, int id_klienta, int liczba_produktow, double suma) {
     if (!kasjer) return;
     
@@ -104,18 +104,18 @@ void ObsluzKlienta(Kasjer* kasjer, int id_klienta, int liczba_produktow, double 
     kasjer->stan = KASJER_CZEKA_NA_KLIENTA;
 }
 
-// Sprawdza czy nalezy otworzyc kase 1
+//Sprawdza czy nalezy otworzyc kase 1
 int CzyOtworzycKase1(StanSklepu* stan) {
     if (!stan) return 0;
     
-    // Kasa 1 otwierana gdy > 3 osoby w kolejce do kas stacjonarnych
+    //Kasa 1 otwierana gdy > 3 osoby w kolejce do kas stacjonarnych
     return stan->kasy_stacjonarne[0].liczba_w_kolejce > 3;
 }
 
-// Funkcja main - punkt wejscia dla procesu kasjera
+//Funkcja main - punkt wejscia dla procesu kasjera
 #ifdef KASJER_STANDALONE
 int main(int argc, char* argv[]) {
-    // Sprawdzenie argumentow przekazanych do programu
+    //Sprawdzenie argumentow przekazanych do programu
     if (argc != 3) {
         fprintf(stderr, "Uzycie: %s <sciezka> <id_kasy>\n", argv[0]);
         return 1;
@@ -130,14 +130,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Dolaczenie do pamieci wspoldzielonej
+    //Dolaczenie do pamieci wspoldzielonej
     StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona(sciezka);
     if (!stan_sklepu) {
         fprintf(stderr, "Kasjer [Kasa %d]: Nie mozna dolaczyc do pamieci wspoldzielonej\n", id_kasy + 1);
         return 1;
     }
     
-    // Dolaczenie do semaforow
+    //Dolaczenie do semaforow
     int sem_id = DolaczSemafory(sciezka);
     if (sem_id == -1) {
         fprintf(stderr, "Kasjer [Kasa %d]: Nie mozna dolaczyc do semaforow\n", id_kasy + 1);
@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Utworzenie kasjera
+    //Utworzenie kasjera
     Kasjer* kasjer = StworzKasjera(id_kasy);
     if (!kasjer) {
         fprintf(stderr, "Kasjer [Kasa %d]: Nie udalo sie utworzyc kasjera\n", id_kasy + 1);
@@ -157,23 +157,23 @@ int main(int argc, char* argv[]) {
     sprintf(buf, "Kasjer [Kasa %d]: Proces uruchomiony, oczekuje na otwarcie kasy.", id_kasy + 1);
     ZapiszLog(LOG_INFO, buf);
     
-    // Glowna petla kasjera
+    //Glowna petla kasjera
     while (1) {
-        // Sprawdzenie flagi ewakuacji
+        //Sprawdzenie flagi ewakuacji
         if (stan_sklepu->flaga_ewakuacji) {
             sprintf(buf, "Kasjer [Kasa %d]: Otrzymano sygnal ewakuacji, koncze prace.", id_kasy + 1);
             ZapiszLog(LOG_INFO, buf);
             break;
         }
         
-        // Sprawdzenie stanu kasy
+        //Sprawdzenie stanu kasy
         ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
         StanKasy stan_kasy = stan_sklepu->kasy_stacjonarne[id_kasy].stan;
         ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
         
         if (stan_kasy == KASA_ZAMKNIETA) {
             kasjer->stan = KASJER_NIEAKTYWNY;
-            usleep(500000); // 500ms
+            usleep(500000); //500ms
             continue;
         }
         
@@ -197,7 +197,7 @@ int main(int argc, char* argv[]) {
             stan_sklepu->kasy_stacjonarne[id_kasy].czas_ostatniej_obslugi = time(NULL);
             ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
         } else {
-            // Sprawdzenie czy kasa jest bezczynna
+            //Sprawdzenie czy kasa jest bezczynna
 
             time_t teraz = time(NULL);
             
@@ -206,7 +206,7 @@ int main(int argc, char* argv[]) {
             int w_kolejce = stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce;
             ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
             
-            // 30 sekund bez klienta - zamkniecie kasy
+            //30 sekund bez klienta - zamkniecie kasy
             if (ostatnia_obsluga > 0 && w_kolejce == 0 && 
                 (teraz - ostatnia_obsluga) >= CZAS_BEZCZYNNOSCI_DO_ZAMKNIECIA) {
                 
@@ -225,7 +225,7 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // Czyszczenie
+    //Czyszczenie
     UsunKasjera(kasjer);
     OdlaczPamiecWspoldzielona(stan_sklepu);
     

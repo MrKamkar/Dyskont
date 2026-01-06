@@ -1,52 +1,52 @@
 #include "pamiec_wspoldzielona.h"
 #include <errno.h>
 
-// Funkcja inicjalizujaca pamiec wspoldzielona
+//Funkcja inicjalizujaca pamiec wspoldzielona
 StanSklepu* InicjalizujPamiecWspoldzielona(const char* sciezka) {
-    // Generowanie klucza dla pamieci wspoldzielonej
+    //Generowanie klucza dla pamieci wspoldzielonej
     key_t klucz = ftok(sciezka, 'S');
     if (klucz == -1) {
         perror("Blad generowania klucza");
         exit(1);
     }
 
-    // Utworzenie segmentu pamieci wspoldzielonej
+    //Utworzenie segmentu pamieci wspoldzielonej
     int shm_id = shmget(klucz, sizeof(StanSklepu), IPC_CREAT | 0600);
     if (shm_id == -1) {
         perror("Blad utworzenia segmentu pamieci dzielonej");
         exit(1);
     }
 
-    // Dolaczenie segmentu do przestrzeni adresowej procesu
+    //Dolaczenie segmentu do przestrzeni adresowej procesu
     StanSklepu* stan = (StanSklepu*)shmat(shm_id, NULL, 0);
     if (stan == (void*)-1) {
         perror("Blad dolaczenia pamieci dzielonej");
         exit(1);
     }
 
-    // Czyszczenie
+    //Czyszczenie
     WyczyscStanSklepu(stan);
 
     return stan;
 }
 
-// Funkcja dolaczajaca do istniejacej pamieci wspoldzielonej
+//Funkcja dolaczajaca do istniejacej pamieci wspoldzielonej
 StanSklepu* DolaczPamiecWspoldzielona(const char* sciezka) {
-    // Generowanie tego samego klucza
+    //Generowanie tego samego klucza
     key_t klucz = ftok(sciezka, 'S');
     if (klucz == -1) {
         perror("Blad generowania klucza");
         exit(1);
     }
 
-    // Pobranie ID istniejacego segmentu
+    //Pobranie ID istniejacego segmentu
     int shm_id = shmget(klucz, sizeof(StanSklepu), 0600);
     if (shm_id == -1) {
         perror("Blad uzyskania ID pamieci dzielonej");
         exit(1);
     }
 
-    // Dolaczenie do przestrzeni adresowej
+    //Dolaczenie do przestrzeni adresowej
     StanSklepu* stan = (StanSklepu*)shmat(shm_id, NULL, 0);
     if (stan == (void*)-1) {
         perror("Blad dolaczenia do pamieci dzielonej");
@@ -56,7 +56,7 @@ StanSklepu* DolaczPamiecWspoldzielona(const char* sciezka) {
     return stan;
 }
 
-// Odlaczenie od pamieci wspoldzielonej
+//Odlaczenie od pamieci wspoldzielonej
 void OdlaczPamiecWspoldzielona(StanSklepu* stan) {
     if (stan == NULL) return;
 
@@ -65,7 +65,7 @@ void OdlaczPamiecWspoldzielona(StanSklepu* stan) {
     }
 }
 
-// Usuniecie pamieci wspoldzielonej wywolywane przez glowny proces
+//Usuniecie pamieci wspoldzielonej wywolywane przez glowny proces
 void UsunPamiecWspoldzielona(const char* sciezka) {
     key_t klucz = ftok(sciezka, 'S');
     if (klucz == -1) {
@@ -79,13 +79,13 @@ void UsunPamiecWspoldzielona(const char* sciezka) {
         return;
     }
 
-    // Usuniecie segmentu
+    //Usuniecie segmentu
     if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
         perror("Blad usuniecia segmentu pamieci");
     }
 }
 
-// Statyczne dane inicjalizacyjne dla produktow
+//Statyczne dane inicjalizacyjne dla produktow
 static const struct {
     Produkt dane;
     int ilosc_poczatkowa;
@@ -111,21 +111,21 @@ static const struct {
     { {"Wodka 0.5L", 35.00, KAT_ALKOHOL, 900.0}, 30 }
 };
 
-// Czyszczenie struktury stanu
+//Czyszczenie struktury stanu
 void WyczyscStanSklepu(StanSklepu* stan) {
     if (!stan) return;
 
-    // Wyzerowanie calej struktury
+    //Wyzerowanie calej struktury
     memset(stan, 0, sizeof(StanSklepu));
 
-    // Inicjalizacja kas samoobslugowych
+    //Inicjalizacja kas samoobslugowych
     for (int i = 0; i < LICZBA_KAS_SAMO; i++) {
         stan->kasy_samo[i].stan = (i < MIN_KAS_SAMO_CZYNNYCH) ? KASA_WOLNA : KASA_ZAMKNIETA;
         stan->kasy_samo[i].id_klienta = -1;
         stan->kasy_samo[i].czas_rozpoczecia = 0;
     }
 
-    // Inicjalizacja kas stacjonarnych
+    //Inicjalizacja kas stacjonarnych
     for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
         stan->kasy_stacjonarne[i].stan = KASA_ZAMKNIETA;
         stan->kasy_stacjonarne[i].id_klienta = -1;
@@ -133,24 +133,24 @@ void WyczyscStanSklepu(StanSklepu* stan) {
         stan->kasy_stacjonarne[i].czas_ostatniej_obslugi = 0;
     }
 
-    // Inicjalizacja kolejki samoobslugowej
+    //Inicjalizacja kolejki samoobslugowej
     stan->liczba_w_kolejce_samo = 0;
     for (int i = 0; i < MAX_KOLEJKA_SAMO; i++) {
         stan->kolejka_samo[i] = -1;
     }
 
-    // Inicjalizacja licznikow
+    //Inicjalizacja licznikow
     stan->liczba_klientow_w_sklepie = 0;
     stan->liczba_czynnych_kas_samo = MIN_KAS_SAMO_CZYNNYCH;
     stan->flaga_ewakuacji = 0;
 
-    // Inicjalizacja bazy produktow
+    //Inicjalizacja bazy produktow
     stan->liczba_produktow = sizeof(DANE_PRODUKTOW) / sizeof(DANE_PRODUKTOW[0]);
     for (int i = 0; i < stan->liczba_produktow; i++) {
         stan->magazyn[i].produkt = DANE_PRODUKTOW[i].dane;
         stan->magazyn[i].ilosc = DANE_PRODUKTOW[i].ilosc_poczatkowa;
     }
 
-    // Zapisanie czasu startu
+    //Zapisanie czasu startu
     stan->czas_startu = time(NULL);
 }
