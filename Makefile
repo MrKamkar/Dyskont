@@ -11,6 +11,7 @@ KLIENT_TARGET = klient
 KASJER_TARGET = kasjer
 KASA_SAMO_TARGET = kasa_samo
 PRACOWNIK_TARGET = pracownik
+KIEROWNIK_TARGET = kierownik
 
 SRC_DIR = Dyskont
 
@@ -26,7 +27,7 @@ MAIN_OBJS = $(SRC_DIR)/main.o $(SRC_DIR)/klient_lib.o
 KLIENT_SRC = $(SRC_DIR)/klient.c
 
 # Buduj wszystkie pliki wykonywalne
-all: $(MAIN_TARGET) $(KLIENT_TARGET) $(KASJER_TARGET) $(KASA_SAMO_TARGET) $(PRACOWNIK_TARGET)
+all: $(MAIN_TARGET) $(KLIENT_TARGET) $(KASJER_TARGET) $(KASA_SAMO_TARGET) $(PRACOWNIK_TARGET) $(KIEROWNIK_TARGET)
 
 # Program główny (manager)
 $(MAIN_TARGET): $(MAIN_OBJS) $(COMMON_OBJS)
@@ -68,13 +69,21 @@ $(SRC_DIR)/kasa_samo_standalone.o: $(SRC_DIR)/kasa_samoobslugowa.c
 $(SRC_DIR)/pracownik_standalone.o: $(SRC_DIR)/pracownik_obslugi.c
 	$(CC) $(CFLAGS) -DPRACOWNIK_STANDALONE -c $(SRC_DIR)/pracownik_obslugi.c -o $(SRC_DIR)/pracownik_standalone.o
 
+# Program kierownika (standalone)
+$(KIEROWNIK_TARGET): $(SRC_DIR)/kierownik_standalone.o $(SRC_DIR)/pamiec_wspoldzielona.o $(SRC_DIR)/logi.o $(SRC_DIR)/semafory.o
+	$(CC) $(SRC_DIR)/kierownik_standalone.o $(SRC_DIR)/pamiec_wspoldzielona.o $(SRC_DIR)/logi.o $(SRC_DIR)/semafory.o -o $(KIEROWNIK_TARGET) $(LDFLAGS)
+
+# Kompilacja kierownik.c jako standalone (z KIEROWNIK_STANDALONE)
+$(SRC_DIR)/kierownik_standalone.o: $(SRC_DIR)/kierownik.c
+	$(CC) $(CFLAGS) -DKIEROWNIK_STANDALONE -c $(SRC_DIR)/kierownik.c -o $(SRC_DIR)/kierownik_standalone.o
+
 # Kompilacja pozostałych plików
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Czyszczenie
 clean:
-	rm -f $(SRC_DIR)/*.o $(MAIN_TARGET) $(KLIENT_TARGET) $(KASJER_TARGET) $(KASA_SAMO_TARGET) $(PRACOWNIK_TARGET)
+	rm -f $(SRC_DIR)/*.o $(MAIN_TARGET) $(KLIENT_TARGET) $(KASJER_TARGET) $(KASA_SAMO_TARGET) $(PRACOWNIK_TARGET) $(KIEROWNIK_TARGET)
 
 # Uruchomienie
 run: all

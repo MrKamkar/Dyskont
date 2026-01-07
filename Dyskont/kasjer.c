@@ -204,10 +204,25 @@ int main(int argc, char* argv[]) {
             ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
             time_t ostatnia_obsluga = stan_sklepu->kasy_stacjonarne[id_kasy].czas_ostatniej_obslugi;
             int w_kolejce = stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce;
+            int polecenie = stan_sklepu->polecenie_kierownika;
+            int kasa_do_zamkniecia = stan_sklepu->id_kasy_do_zamkniecia;
             ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
             
+            //Sprawdz polecenie zamkniecia od kierownika
+            if (polecenie == 2 && kasa_do_zamkniecia == id_kasy && w_kolejce == 0) {
+                sprintf(buf, "Kasjer [Kasa %d]: Polecenie kierownika - zamykam kase.", id_kasy + 1);
+                ZapiszLog(LOG_INFO, buf);
+                
+                ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
+                stan_sklepu->polecenie_kierownika = 0;  //Wyczysc polecenie
+                stan_sklepu->id_kasy_do_zamkniecia = -1;
+                ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                
+                kasjer->stan = KASJER_ZAMYKA_KASE;
+            }
             //30 sekund bez klienta - zamkniecie kasy
-            if (ostatnia_obsluga > 0 && w_kolejce == 0 && 
+            else if (ostatnia_obsluga > 0 && w_kolejce == 0 && 
                 (teraz - ostatnia_obsluga) >= CZAS_BEZCZYNNOSCI_DO_ZAMKNIECIA) {
                 
                 sprintf(buf, "Kasjer [Kasa %d]: Brak klientow przez %d sekund, zamykam kase.",

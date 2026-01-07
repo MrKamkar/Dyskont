@@ -120,7 +120,7 @@ void WyczyscStanSklepu(StanSklepu* stan) {
 
     //Inicjalizacja kas samoobslugowych
     for (int i = 0; i < LICZBA_KAS_SAMO; i++) {
-        stan->kasy_samo[i].stan = (i < MIN_KAS_SAMO_CZYNNYCH) ? KASA_WOLNA : KASA_ZAMKNIETA;
+        stan->kasy_samo[i].stan = KASA_WOLNA;
         stan->kasy_samo[i].id_klienta = -1;
         stan->kasy_samo[i].czas_rozpoczecia = 0;
     }
@@ -143,6 +143,8 @@ void WyczyscStanSklepu(StanSklepu* stan) {
     stan->liczba_klientow_w_sklepie = 0;
     stan->liczba_czynnych_kas_samo = MIN_KAS_SAMO_CZYNNYCH;
     stan->flaga_ewakuacji = 0;
+    stan->polecenie_kierownika = 0;
+    stan->id_kasy_do_zamkniecia = -1;
 
     //Inicjalizacja bazy produktow
     stan->liczba_produktow = sizeof(DANE_PRODUKTOW) / sizeof(DANE_PRODUKTOW[0]);

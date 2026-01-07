@@ -10,7 +10,7 @@
 #define CZAS_SKANOWANIA_PRODUKTU_MS 300
 
 //Szansa na losowa blokade kasy (1 na X produktow)
-#define SZANSA_BLOKADY 10
+#define SZANSA_BLOKADY 2
 
 //Czas oczekiwania na odblokowaanie kasy (w sekundach)
 #define CZAS_OCZEKIWANIA_NA_ODBLOKOWANIE 5

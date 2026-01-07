@@ -30,9 +30,9 @@ typedef struct {
     double waga; //w gramach (dla pojedynczej sztuki)
 } Produkt;
 
-//Maksymalne rozmiary
-#define MAX_KOLEJKA_SAMO 100
-#define MAX_KOLEJKA_STACJONARNA 50
+//Maksymalne rozmiary kolejek
+#define MAX_KOLEJKA_SAMO 500
+#define MAX_KOLEJKA_STACJONARNA 200
 #define MAX_PRODUKTOW 50
 
 //Liczba kas
@@ -94,6 +94,8 @@ typedef struct {
     
     //Flagi kontrolne
     int flaga_ewakuacji; //Sygnal 3 od kierownika
+    int polecenie_kierownika;    //Polecenie od kierownika (0=brak, 1=otworz, 2=zamknij, 3=ewakuacja)
+    int id_kasy_do_zamkniecia;   //Ktora kasa ma byc zamknieta (0 lub 1)
     
     //Czas symulacji
     time_t czas_startu;

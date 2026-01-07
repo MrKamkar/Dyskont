@@ -164,12 +164,12 @@ int main(int argc, char* argv[]) {
                     break;
             }
         } else if (przeczytano == 0) {
-            //Koniec danych - ponowne otwarcie FIFO (nieblokujace)
+            //Koniec danych, ponowne otwarcie FIFO
             close(fd);
             fd = open(FIFO_OBSLUGA, O_RDONLY | O_NONBLOCK);
             if (fd == -1) break;
         }
-        //Jesli przeczytano == -1 i errno == EAGAIN to brak danych - kontynuuj
+        //Jesli przeczytano == -1 i errno == EAGAIN to brak danych
         
         usleep(100000); //100ms
     }

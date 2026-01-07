@@ -74,3 +74,6 @@ build/
 # Dyskont executable file
 dyskont.out
 upload.ps1
+
+# Logs
+logs/

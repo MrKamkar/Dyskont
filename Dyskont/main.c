@@ -40,6 +40,17 @@ void ObslugaSIGINT(int sig) {
 int main(int argc, char* argv[]) {
     srand(time(NULL));
     
+    //Parsowanie argumentu czasu symulacji
+    int czas_symulacji_arg = 60;  //Domyslnie 60 sekund
+    if (argc >= 2) {
+        czas_symulacji_arg = atoi(argv[1]);
+        if (czas_symulacji_arg <= 0) {
+            fprintf(stderr, "Uzycie: %s [czas_symulacji_sekund]\n", argv[0]);
+            fprintf(stderr, "Przyklad: %s 120  (symulacja 120 sekund)\n", argv[0]);
+            return 1;
+        }
+    }
+    
     //Zapis sciezki dla handlera sygnalu
     snprintf(g_sciezka, sizeof(g_sciezka), "%s", argv[0]);
     
@@ -48,6 +59,7 @@ int main(int argc, char* argv[]) {
     
     //Inicjalizacja systemu logowania
     printf("=== Symulacja Dyskontu ===\n");
+    printf("Czas symulacji: %d sekund\n", czas_symulacji_arg);
     InicjalizujSystemLogowania(argv[0]);
     UruchomProcesLogujacy();
     
@@ -155,64 +167,117 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    //Liczba klientow do utworzenia
-    int liczba_klientow = 10;  //Zwiekszona liczba dla testu
+    //=== PARAMETRY SYMULACJI ===
+    int CZAS_SYMULACJI_SEK = czas_symulacji_arg;  //Z argumentu lub domyslnie 60
+    int MAX_KLIENTOW_ROWNOCZESNIE = 100;
+    int PRZERWA_MIEDZY_KLIENTAMI_MS = 50;
+    
     char buf[256];
-    sprintf(buf, "Uruchamianie %d procesow klientow..", liczba_klientow);
+    sprintf(buf, "Symulacja bedzie trwac %d sekund. Max klientow rownoczesnie: %d", 
+            CZAS_SYMULACJI_SEK, MAX_KLIENTOW_ROWNOCZESNIE);
     ZapiszLog(LOG_INFO, buf);
     
-    //Tablica PID procesow klienckich
-    pid_t* pid_klientow = malloc(sizeof(pid_t) * liczba_klientow);
+    //Tablica PID procesow klienckich (cykliczna)
+    pid_t* pid_klientow = malloc(sizeof(pid_t) * MAX_KLIENTOW_ROWNOCZESNIE);
+    int aktywnych_klientow = 0;
+    int nastepny_slot = 0;
+    int id_klienta = 0;
+    int calkowita_liczba_klientow = 0;
     
-    //Tworzenie procesow klientow
-    for (int i = 0; i < liczba_klientow; i++) {
-        pid_t pid = fork();
+    time_t czas_startu = time(NULL);
+    time_t czas_konca = czas_startu + CZAS_SYMULACJI_SEK;
+    
+    ZapiszLog(LOG_INFO, "Rozpoczynam ciagla symulacje klientow...");
+    
+    //Glowna petla symulacji - tworzenie klientow przez okreslony czas
+    while (time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji) {
         
-        if (pid == -1) {
-            //Blad fork
-            perror("Blad fork()");
-            ZapiszLog(LOG_BLAD, "Nie udalo sie stworzyc procesu klienta!");
-            continue;
+        //Zbierz zakonczone procesy (nieblokujaco)
+        int status;
+        pid_t zakonczone;
+        while ((zakonczone = waitpid(-1, &status, WNOHANG)) > 0) {
+            aktywnych_klientow--;
+            if (WIFEXITED(status)) {
+                int kod = WEXITSTATUS(status);
+                if (kod == 0) {
+                    sprintf(buf, "Klient [PID: %d] zakonczyl pomyslnie.", zakonczone);
+                    ZapiszLog(LOG_INFO, buf);
+                } else {
+                    const char* opis;
+                    switch (kod) {
+                        case 1: opis = "niepelnoletni z alkoholem"; break;
+                        case 2: opis = "kolejka pelna"; break;
+                        default: opis = "nieznany blad"; break;
+                    }
+                    sprintf(buf, "Klient [PID: %d] zakonczyl: %s (kod %d)", zakonczone, opis, kod);
+                    ZapiszLog(LOG_BLAD, buf);
+                }
+            }
         }
-        else if (pid == 0) {
-            //Proces dziecka - uruchomienie klienta przez exec
-            char id_str[16];
-            sprintf(id_str, "%d", i + 1);
+        
+        //Tworz nowych klientow jesli jest miejsce
+        while (aktywnych_klientow < MAX_KLIENTOW_ROWNOCZESNIE && 
+               time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji) {
             
-            execl("./klient", "klient", argv[0], id_str, (char*)NULL);
+            pid_t pid = fork();
             
-            //Jesli doszlismy tutaj, exec sie nie powiodl
-            perror("Blad exec()");
-            exit(1);
+            if (pid == -1) {
+                perror("Blad fork()");
+                usleep(10000); // 10ms przerwa przy bledzie
+                break;
+            }
+            else if (pid == 0) {
+                //Proces dziecka - uruchomienie klienta przez exec
+                char id_str[16];
+                sprintf(id_str, "%d", id_klienta + 1);
+                
+                execl("./klient", "klient", argv[0], id_str, (char*)NULL);
+                
+                perror("Blad exec()");
+                exit(1);
+            }
+            else {
+                //Proces rodzica
+                pid_klientow[nastepny_slot] = pid;
+                nastepny_slot = (nastepny_slot + 1) % MAX_KLIENTOW_ROWNOCZESNIE;
+                aktywnych_klientow++;
+                id_klienta++;
+                calkowita_liczba_klientow++;
+                
+                //Krotka przerwa miedzy tworzeniem procesow
+                usleep(PRZERWA_MIEDZY_KLIENTAMI_MS * 1000);
+            }
         }
-        else {
-            //Proces rodzica - zapisanie PID dziecka
-            pid_klientow[i] = pid;
-            sprintf(buf, "Uruchomiono proces klienta [PID: %d, ID: %d]", pid, i + 1);
+        
+        //Wyswietlanie statusu co 5 sekund
+        static time_t ostatni_status = 0;
+        time_t teraz = time(NULL);
+        if (teraz - ostatni_status >= 5) {
+            sprintf(buf, "Symulacja: %ld/%d sek, klientow aktywnych: %d, razem: %d",
+                    teraz - czas_startu, CZAS_SYMULACJI_SEK, aktywnych_klientow, calkowita_liczba_klientow);
             ZapiszLog(LOG_INFO, buf);
-            
-            //Krotka przerwa miedzy tworzeniem procesow
-            usleep(100000); //100ms
+            ostatni_status = teraz;
         }
+        
+        usleep(10000); // 10ms glowna petla
     }
     
-    //Oczekiwanie na zakonczenie wszystkich procesow klienckich
-    ZapiszLog(LOG_INFO, "Oczekiwanie na zakonczenie wszystkich klientow..");
-    for (int i = 0; i < liczba_klientow; i++) {
+    sprintf(buf, "Koniec symulacji. Czekam na %d pozostalych klientow...", aktywnych_klientow);
+    ZapiszLog(LOG_INFO, buf);
+    
+    //Oczekiwanie na zakonczenie pozostalych procesow klienckich
+    while (aktywnych_klientow > 0) {
         int status;
-        waitpid(pid_klientow[i], &status, 0);
-        
-        if (WIFEXITED(status)) {
-            int kod = WEXITSTATUS(status);
-            sprintf(buf, "Proces klienta [PID: %d] zakonczyl sie z kodem: %d", 
-                    pid_klientow[i], kod);
-            ZapiszLog(kod == 0 ? LOG_INFO : LOG_BLAD, buf);
+        pid_t zakonczone = waitpid(-1, &status, 0);
+        if (zakonczone > 0) {
+            aktywnych_klientow--;
         }
     }
     
     free(pid_klientow);
     
-    ZapiszLog(LOG_INFO, "Wszystkie procesy klientow zakonczone.");
+    sprintf(buf, "Symulacja zakonczona. Laczna liczba klientow: %d", calkowita_liczba_klientow);
+    ZapiszLog(LOG_INFO, buf);
     
     //Ustawienie flagi ewakuacji dla kasjerow
     ZapiszLog(LOG_INFO, "Zamykanie procesow kasjerow i kas samoobslugowych..");
