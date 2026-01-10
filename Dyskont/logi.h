@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
+#include <pthread.h>
 
 //Typy komunikatow logowania
 typedef enum {
@@ -37,7 +38,7 @@ struct KomunikatLog {
 
 //Funkcje zarzadzajace
 void InicjalizujSystemLogowania(const char* sciezka);
-void UruchomProcesLogujacy();
+void UruchomWatekLogujacy();  //Zmienione z procesu na watek
 void ZamknijSystemLogowania();
 
 //Funkcja dla klienta

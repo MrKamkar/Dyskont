@@ -119,7 +119,7 @@ void WyczyscStanSklepu(StanSklepu* stan) {
     memset(stan, 0, sizeof(StanSklepu));
 
     //Inicjalizacja kas samoobslugowych
-    for (int i = 0; i < LICZBA_KAS_SAMO; i++) {
+    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
         stan->kasy_samo[i].stan = KASA_WOLNA;
         stan->kasy_samo[i].id_klienta = -1;
         stan->kasy_samo[i].czas_rozpoczecia = 0;

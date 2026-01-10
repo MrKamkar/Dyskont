@@ -15,7 +15,53 @@ static StanSklepu* g_stan_sklepu = NULL;
 static int g_sem_id = -1;
 static char g_sciezka[256];
 
-//Handler sygnalu SIGINT - czyszczenie zasobow
+//Otwieranie kasy stacjonarnej 2
+void ObslugaSIGUSR1(int sig) {
+    if (!g_stan_sklepu) return;
+    
+    ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    if (g_stan_sklepu->kasy_stacjonarne[1].stan == KASA_ZAMKNIETA) {
+        g_stan_sklepu->kasy_stacjonarne[1].stan = KASA_WOLNA;
+        g_stan_sklepu->kasy_stacjonarne[1].czas_ostatniej_obslugi = time(NULL);
+        ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZapiszLog(LOG_INFO, "Kierownik: Sygnal SIGUSR1 - otwarto kase stacjonarna 2.");
+    } else {
+        ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: Kasa 2 jest juz otwarta.");
+    }
+}
+
+//Zamykanie kasy stacjonarnej
+void ObslugaSIGUSR2(int sig) {
+    if (!g_stan_sklepu) return;
+    
+    ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    //Oznacz kase jako zamykana, nowi klienci nie dolacza
+    if (g_stan_sklepu->kasy_stacjonarne[0].stan != KASA_ZAMKNIETA) {
+        g_stan_sklepu->kasy_stacjonarne[0].stan = KASA_ZAMYKANA;
+        g_stan_sklepu->polecenie_kierownika = 2;  //POLECENIE_ZAMKNIJ_KASE
+        g_stan_sklepu->id_kasy_do_zamkniecia = 0;
+        ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZapiszLog(LOG_INFO, "Kierownik: Sygnal SIGUSR2 - kasa 1 zamyka sie.");
+    } else {
+        ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: Kasa 1 jest juz zamknieta.");
+    }
+}
+
+//Ewakuacja sklepu
+void ObslugaSIGTERM(int sig) {
+    if (!g_stan_sklepu) return;
+    
+    ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    g_stan_sklepu->flaga_ewakuacji = 1;
+    g_stan_sklepu->polecenie_kierownika = 3;  //POLECENIE_EWAKUACJA
+    ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    
+    ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: Sygnal SIGTERM - EWAKUACJA! Klienci opuszczaja sklep.");
+}
+
+//Handler sygnalu SIGINT, czyszczenie zasobow
 void ObslugaSIGINT(int sig) {
     ZapiszLog(LOG_INFO, "Otrzymano SIGINT - rozpoczynam zamykanie systemu..");
     
@@ -40,32 +86,41 @@ void ObslugaSIGINT(int sig) {
 int main(int argc, char* argv[]) {
     srand(time(NULL));
     
-    //Parsowanie argumentu czasu symulacji
-    int czas_symulacji_arg = 60;  //Domyslnie 60 sekund
-    if (argc >= 2) {
-        czas_symulacji_arg = atoi(argv[1]);
-        if (czas_symulacji_arg <= 0) {
-            fprintf(stderr, "Uzycie: %s [czas_symulacji_sekund]\n", argv[0]);
-            fprintf(stderr, "Przyklad: %s 120  (symulacja 120 sekund)\n", argv[0]);
-            return 1;
-        }
+    //Pobranie czasu symulacji
+    if (argc < 2) {
+        fprintf(stderr, "Uzycie: %s <czas_symulacji_sekund>\n", argv[0]);
+        return 1;
+    }
+    
+    int czas_symulacji_arg = atoi(argv[1]);
+    if (czas_symulacji_arg < 0) {
+        fprintf(stderr, "Blad: Czas symulacji musi byc liczba wieksza od 0\n");
+        return 1;
     }
     
     //Zapis sciezki dla handlera sygnalu
     snprintf(g_sciezka, sizeof(g_sciezka), "%s", argv[0]);
     
-    //Rejestracja handlera sygnalu
+    //Rejestracja handlerow sygnalow
     signal(SIGINT, ObslugaSIGINT);
+    signal(SIGUSR1, ObslugaSIGUSR1);  //Sygnal 1, otwieranie kasy 2
+    signal(SIGUSR2, ObslugaSIGUSR2);  //Sygnal 2, zamykanie kasy
+    signal(SIGTERM, ObslugaSIGTERM);  //Sygnal 3, ewakuacja
     
     //Inicjalizacja systemu logowania
     printf("=== Symulacja Dyskontu ===\n");
     printf("Czas symulacji: %d sekund\n", czas_symulacji_arg);
+    printf("PID glownego procesu: %d (do wysylania sygnalow)\n", getpid());
     InicjalizujSystemLogowania(argv[0]);
-    UruchomProcesLogujacy();
+    UruchomWatekLogujacy();
     
     //Inicjalizacja pamieci wspoldzielonej
     ZapiszLog(LOG_INFO, "Inicjalizacja pamieci wspoldzielonej..");
     g_stan_sklepu = InicjalizujPamiecWspoldzielona(argv[0]);
+    
+    //Zapisz PID glownego procesu do pamieci wspoldzielonej
+    g_stan_sklepu->pid_glowny = getpid();
+    
     ZapiszLog(LOG_INFO, "Pamiec wspoldzielona zainicjalizowana pomyslnie.");
     
     //Inicjalizacja semaforow
@@ -91,7 +146,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
         else if (pid == 0) {
-            //Proces dziecka - uruchomienie kasjera przez exec
+            //Proces dziecka, uruchomienie kasjera przez exec
             char id_str[16];
             sprintf(id_str, "%d", i);
             
@@ -125,7 +180,7 @@ int main(int argc, char* argv[]) {
         ZapiszLog(LOG_BLAD, "Nie udalo sie stworzyc procesu pracownika obslugi!");
     }
     else if (pid_pracownik == 0) {
-        //Proces dziecka - uruchomienie pracownika przez exec
+        //Proces dziecka, uruchomienie pracownika przez exec
         execl("./pracownik", "pracownik", argv[0], (char*)NULL);
         
         perror("Blad exec() dla pracownika obslugi");
@@ -139,9 +194,9 @@ int main(int argc, char* argv[]) {
     
     //Uruchomienie procesow kas samoobslugowych (6 kas)
     ZapiszLog(LOG_INFO, "Uruchamianie procesow kas samoobslugowych..");
-    pid_t pid_kas_samo[LICZBA_KAS_SAMO];
+    pid_t pid_kas_samo[LICZBA_KAS_SAMOOBSLUGOWYCH];
     
-    for (int i = 0; i < LICZBA_KAS_SAMO; i++) {
+    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
         pid_t pid = fork();
         
         if (pid == -1) {
@@ -150,7 +205,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
         else if (pid == 0) {
-            //Proces dziecka - uruchomienie kasy samoobslugowej przez exec
+            //Proces dziecka, uruchomienie kasy samoobslugowej przez exec
             char id_str[16];
             sprintf(id_str, "%d", i);
             
@@ -167,10 +222,8 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    //=== PARAMETRY SYMULACJI ===
-    int CZAS_SYMULACJI_SEK = czas_symulacji_arg;  //Z argumentu lub domyslnie 60
-    int MAX_KLIENTOW_ROWNOCZESNIE = 100;
-    int PRZERWA_MIEDZY_KLIENTAMI_MS = 50;
+    //Czas symulacji (z argumentu)
+    int CZAS_SYMULACJI_SEK = czas_symulacji_arg;
     
     char buf[256];
     sprintf(buf, "Symulacja bedzie trwac %d sekund. Max klientow rownoczesnie: %d", 
@@ -189,7 +242,7 @@ int main(int argc, char* argv[]) {
     
     ZapiszLog(LOG_INFO, "Rozpoczynam ciagla symulacje klientow...");
     
-    //Glowna petla symulacji - tworzenie klientow przez okreslony czas
+    //Glowna petla symulacji, tworzenie klientow przez okreslony czas
     while (time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji) {
         
         //Zbierz zakonczone procesy (nieblokujaco)
@@ -227,7 +280,7 @@ int main(int argc, char* argv[]) {
                 break;
             }
             else if (pid == 0) {
-                //Proces dziecka - uruchomienie klienta przez exec
+                //Proces dziecka, uruchomienie klienta przez exec
                 char id_str[16];
                 sprintf(id_str, "%d", id_klienta + 1);
                 
@@ -294,7 +347,7 @@ int main(int argc, char* argv[]) {
     }
     
     //Oczekiwanie na zakonczenie procesow kas samoobslugowych
-    for (int i = 0; i < LICZBA_KAS_SAMO; i++) {
+    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
         int status;
         waitpid(pid_kas_samo[i], &status, 0);
         sprintf(buf, "Proces kasy samoobslugowej [Kasa: %d] zakonczony.", i + 1);

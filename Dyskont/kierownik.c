@@ -59,7 +59,7 @@ void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
         ZapiszLog(LOG_INFO, buf);
         printf("Kasa %d zostanie zamknieta po obsluzeniu %d klientow.\n", id_kasy + 1, w_kolejce);
         
-        //Ustawiamy polecenie - kasjer sam zamknie kase po obsluzeniu
+        //Ustawiamy polecenie, kasjer sam zamknie kase po obsluzeniu
         ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
         stan->polecenie_kierownika = POLECENIE_ZAMKNIJ_KASE;
         stan->id_kasy_do_zamkniecia = id_kasy;
@@ -107,6 +107,7 @@ void PokazStatusKas(StanSklepu* stan, int sem_id) {
             case KASA_WOLNA: status = "WOLNA"; break;
             case KASA_ZAJETA: status = "ZAJETA"; break;
             case KASA_ZABLOKOWANA: status = "ZABLOKOWANA"; break;
+            case KASA_ZAMYKANA: status = "ZAMYKANA"; break;
             default: status = "NIEZNANY";
         }
         printf("  Kasa %d: %s (w kolejce: %d)\n", 
@@ -115,10 +116,10 @@ void PokazStatusKas(StanSklepu* stan, int sem_id) {
     
     printf("\nKASY SAMOOBSLUGOWE:\n");
     int czynne = 0;
-    for (int i = 0; i < LICZBA_KAS_SAMO; i++) {
+    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
         if (stan->kasy_samo[i].stan != KASA_ZAMKNIETA) czynne++;
     }
-    printf("  Czynnych: %d/%d\n", czynne, LICZBA_KAS_SAMO);
+    printf("  Czynnych: %d/%d\n", czynne, LICZBA_KAS_SAMOOBSLUGOWYCH);
     printf("  W kolejce: %d\n", stan->liczba_w_kolejce_samo);
     
     ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
@@ -151,8 +152,20 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
+    //Inicjalizacja systemu logowania
+    InicjalizujSystemLogowania(sciezka);
+    
+    //Pobierz PID glownego procesu z pamieci wspoldzielonej
+    pid_t pid_glowny = stan_sklepu->pid_glowny;
+    if (pid_glowny <= 0) {
+        fprintf(stderr, "Kierownik: Blad - nie znaleziono PID glownego procesu\n");
+        OdlaczPamiecWspoldzielona(stan_sklepu);
+        return 1;
+    }
+    
     ZapiszLog(LOG_INFO, "Kierownik: Proces uruchomiony.");
     printf("Panel kierownika uruchomiony. Polaczono z symulacja.\n");
+    printf("PID procesu glownego: %d\n\n", pid_glowny);
     
     int wybor;
     int dzialaj = 1;
@@ -181,14 +194,25 @@ int main(int argc, char* argv[]) {
                 break;
                 
             case 1:
-                OtworzKase2(stan_sklepu, sem_id);
+                //Wyslij sygnal SIGUSR1, otwieranie kasy 2
+                if (kill(pid_glowny, SIGUSR1) == 0) {
+                    printf("Wyslano sygnal SIGUSR1 - otwieranie kasy 2.\n");
+                } else {
+                    perror("Blad wysylania sygnalu SIGUSR1");
+                }
                 break;
                 
             case 2:
-                ZamknijKase(0, stan_sklepu, sem_id);
+                //Wyslij sygnal SIGUSR2, zamykanie kasy 1
+                if (kill(pid_glowny, SIGUSR2) == 0) {
+                    printf("Wyslano sygnal SIGUSR2 - zamykanie kasy 1.\n");
+                } else {
+                    perror("Blad wysylania sygnalu SIGUSR2");
+                }
                 break;
                 
             case 3:
+                //Zamykanie kasy 2 przez pamiec wspoldzielona, polecenie
                 ZamknijKase(1, stan_sklepu, sem_id);
                 break;
                 
@@ -196,10 +220,14 @@ int main(int argc, char* argv[]) {
                 printf("UWAGA: Czy na pewno chcesz oglosic ewakuacje? (1=tak, 0=nie): ");
                 int potwierdz;
                 if (scanf("%d", &potwierdz) == 1 && potwierdz == 1) {
-                    WydajPolecenie(POLECENIE_EWAKUACJA, -1, stan_sklepu, sem_id);
-                    ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: EWAKUACJA! Wszyscy klienci opuszczaja sklep.");
-                    printf("Ewakuacja ogloszona! Sklep zostanie zamkniety.\n");
-                    dzialaj = 0;
+                    //Wyslij sygnal SIGTERM, ewakuacja
+                    if (kill(pid_glowny, SIGTERM) == 0) {
+                        printf("Wyslano sygnal SIGTERM - EWAKUACJA!\n");
+                        ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: EWAKUACJA! Wyslano sygnal SIGTERM.");
+                        dzialaj = 0;
+                    } else {
+                        perror("Blad wysylania sygnalu SIGTERM");
+                    }
                 } else {
                     printf("Anulowano.\n");
                 }

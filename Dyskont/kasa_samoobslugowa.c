@@ -51,7 +51,7 @@ int ZnajdzWolnaKase(StanSklepu* stan, int sem_id) {
     ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
     
     int wolna_kasa = -1;
-    for (int i = 0; i < LICZBA_KAS_SAMO; i++) {
+    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
         if (stan->kasy_samo[i].stan == KASA_WOLNA) {
             wolna_kasa = i;
             break;
@@ -64,7 +64,7 @@ int ZnajdzWolnaKase(StanSklepu* stan, int sem_id) {
 
 //Zajmuje kase dla klienta
 int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
-    if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMO) return -1;
+    if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) return -1;
     
     ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
     
@@ -82,7 +82,7 @@ int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
 
 //Zwalnia kase
 void ZwolnijKase(int id_kasy, StanSklepu* stan, int sem_id) {
-    if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMO) return;
+    if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) return;
     
     ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
     stan->kasy_samo[id_kasy].stan = KASA_WOLNA;
@@ -95,7 +95,7 @@ void ZwolnijKase(int id_kasy, StanSklepu* stan, int sem_id) {
 int ObliczWymaganaLiczbeKas(int liczba_klientow) {
     int wymagane = (liczba_klientow + KLIENCI_NA_KASE - 1) / KLIENCI_NA_KASE;
     if (wymagane < MIN_KAS_SAMO_CZYNNYCH) wymagane = MIN_KAS_SAMO_CZYNNYCH;
-    if (wymagane > LICZBA_KAS_SAMO) wymagane = LICZBA_KAS_SAMO;
+    if (wymagane > LICZBA_KAS_SAMOOBSLUGOWYCH) wymagane = LICZBA_KAS_SAMOOBSLUGOWYCH;
     return wymagane;
 }
 
@@ -113,12 +113,12 @@ void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
     
     //Otworz wiecej kas jesli potrzeba
     if (wymagane > aktualne) {
-        for (int i = 0; i < LICZBA_KAS_SAMO && aktualne < wymagane; i++) {
+        for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH && aktualne < wymagane; i++) {
             if (stan->kasy_samo[i].stan == KASA_ZAMKNIETA) {
                 stan->kasy_samo[i].stan = KASA_WOLNA;
                 stan->kasy_samo[i].id_klienta = -1;
                 aktualne++;
-                sprintf(buf, "Kasa samo [%d]: Otwarta (wymagane: %d kas dla %d klientow)", 
+                sprintf(buf, "Kasa samoobslugowa [%d]: Otwarta (wymagane: %d kas dla %d klientow)", 
                         i + 1, wymagane, liczba_klientow);
                 ZapiszLog(LOG_INFO, buf);
             }
@@ -127,11 +127,11 @@ void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
     }
     //Zamknij nadmiarowe kasy (tylko wolne)
     else if (wymagane < aktualne && aktualne > MIN_KAS_SAMO_CZYNNYCH) {
-        for (int i = LICZBA_KAS_SAMO - 1; i >= 0 && aktualne > wymagane && aktualne > MIN_KAS_SAMO_CZYNNYCH; i--) {
+        for (int i = LICZBA_KAS_SAMOOBSLUGOWYCH - 1; i >= 0 && aktualne > wymagane && aktualne > MIN_KAS_SAMO_CZYNNYCH; i--) {
             if (stan->kasy_samo[i].stan == KASA_WOLNA) {
                 stan->kasy_samo[i].stan = KASA_ZAMKNIETA;
                 aktualne--;
-                sprintf(buf, "Kasa samo [%d]: Zamknieta (wymagane: %d kas dla %d klientow)", 
+                sprintf(buf, "Kasa samoobslugowa [%d]: Zamknieta (wymagane: %d kas dla %d klientow)", 
                         i + 1, wymagane, liczba_klientow);
                 ZapiszLog(LOG_INFO, buf);
             }
@@ -147,7 +147,7 @@ void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produkto
                                  double suma, int ma_alkohol, int wiek, StanSklepu* stan, int sem_id) {
     char buf[256];
     
-    sprintf(buf, "Kasa samo [%d]: Klient [ID: %d] rozpoczyna skanowanie %d produktow",
+    sprintf(buf, "Kasa samoobslugowa [%d]: Klient [ID: %d] rozpoczyna skanowanie %d produktow",
             id_kasy + 1, id_klienta, liczba_produktow);
     ZapiszLog(LOG_INFO, buf);
     
@@ -157,7 +157,7 @@ void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produkto
         
         //Losowa blokada kasy
         if (rand() % SZANSA_BLOKADY == 0) {
-            sprintf(buf, "Kasa samo [%d]: BLOKADA! Niezgodnosc wagi produktu.",
+            sprintf(buf, "Kasa samoobslugowa [%d]: BLOKADA! Niezgodnosc wagi produktu.",
                     id_kasy + 1);
             ZapiszLog(LOG_OSTRZEZENIE, buf);
             
@@ -185,14 +185,14 @@ void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produkto
                 usleep(100000); //100ms
             }
             
-            sprintf(buf, "Kasa samo [%d]: Odblokowana przez pracownika obslugi.", id_kasy + 1);
+            sprintf(buf, "Kasa samoobslugowa [%d]: Odblokowana przez pracownika obslugi.", id_kasy + 1);
             ZapiszLog(LOG_INFO, buf);
         }
     }
     
     //Weryfikacja wieku przy alkoholu
     if (ma_alkohol) {
-        sprintf(buf, "Kasa samo [%d]: Alkohol wykryty! Wzywam pracownika...",
+        sprintf(buf, "Kasa samoobslugowa [%d]: Alkohol wykryty! Wzywam pracownika...",
                 id_kasy + 1);
         ZapiszLog(LOG_INFO, buf);
         
@@ -208,18 +208,18 @@ void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produkto
         usleep(500000); //500ms
         
         if (wiek < 18) {
-            sprintf(buf, "Kasa samo [%d]: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
+            sprintf(buf, "Kasa samoobslugowa [%d]: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
                     id_kasy + 1, id_klienta, wiek);
             ZapiszLog(LOG_BLAD, buf);
             return; //Koniec bez zakupu
         } else {
-            sprintf(buf, "Kasa samo [%d]: Weryfikacja wieku OK (wiek: %d)", id_kasy + 1, wiek);
+            sprintf(buf, "Kasa samoobslugowa [%d]: Weryfikacja wieku OK (wiek: %d)", id_kasy + 1, wiek);
             ZapiszLog(LOG_INFO, buf);
         }
     }
     
     //Platnosc karta i wydruk paragonu
-    sprintf(buf, "Kasa samo [%d]: Klient [ID: %d] zaplacil karta. Suma: %.2f PLN. Paragon wydrukowany.",
+    sprintf(buf, "Kasa samoobslugowa [%d]: Klient [ID: %d] zaplacil karta. Suma: %.2f PLN. Paragon wydrukowany.",
             id_kasy + 1, id_klienta, suma);
     ZapiszLog(LOG_INFO, buf);
 }
@@ -235,38 +235,41 @@ int main(int argc, char* argv[]) {
     const char* sciezka = argv[1];
     int id_kasy = atoi(argv[2]);
     
-    if (id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMO) {
+    if (id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) {
         fprintf(stderr, "Nieprawidlowy ID kasy: %d (dozwolone: 0-%d)\n", 
-                id_kasy, LICZBA_KAS_SAMO - 1);
+                id_kasy, LICZBA_KAS_SAMOOBSLUGOWYCH - 1);
         return 1;
     }
     
     //Dolaczenie do pamieci wspoldzielonej
     StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona(sciezka);
     if (!stan_sklepu) {
-        fprintf(stderr, "Kasa samo [%d]: Nie mozna dolaczyc do pamieci wspoldzielonej\n", id_kasy + 1);
+        fprintf(stderr, "Kasa samoobslugowa [%d]: Nie mozna dolaczyc do pamieci wspoldzielonej\n", id_kasy + 1);
         return 1;
     }
     
     //Dolaczenie do semaforow
     int sem_id = DolaczSemafory(sciezka);
     if (sem_id == -1) {
-        fprintf(stderr, "Kasa samo [%d]: Nie mozna dolaczyc do semaforow\n", id_kasy + 1);
+        fprintf(stderr, "Kasa samoobslugowa [%d]: Nie mozna dolaczyc do semaforow\n", id_kasy + 1);
         OdlaczPamiecWspoldzielona(stan_sklepu);
         return 1;
     }
     
+    //Inicjalizacja systemu logowania
+    InicjalizujSystemLogowania(sciezka);
+    
     srand(time(NULL) ^ getpid());
     
     char buf[256];
-    sprintf(buf, "Kasa samo [%d]: Proces uruchomiony.", id_kasy + 1);
+    sprintf(buf, "Kasa samoobslugowa [%d]: Proces uruchomiony.", id_kasy + 1);
     ZapiszLog(LOG_INFO, buf);
     
     //Glowna petla
     while (1) {
         //Sprawdzenie flagi ewakuacji
         if (stan_sklepu->flaga_ewakuacji) {
-            sprintf(buf, "Kasa samo [%d]: Ewakuacja - koncze prace.", id_kasy + 1);
+            sprintf(buf, "Kasa samoobslugowa [%d]: Ewakuacja - koncze prace.", id_kasy + 1);
             ZapiszLog(LOG_INFO, buf);
             break;
         }

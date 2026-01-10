@@ -70,6 +70,12 @@ int DodajDoKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, in
     KasaStacjonarna* kasa = &stan->kasy_stacjonarne[id_kasy];
     int wynik = -1;
     
+    //Nie dodawaj do kasy ktora jest zamknieta lub zamykana
+    if (kasa->stan == KASA_ZAMKNIETA || kasa->stan == KASA_ZAMYKANA) {
+        ZwolnijSemafor(sem_id, sem_num);
+        return -1;
+    }
+    
     if (kasa->liczba_w_kolejce < MAX_KOLEJKA_STACJONARNA) {
         kasa->kolejka[kasa->liczba_w_kolejce] = id_klienta;
         kasa->liczba_w_kolejce++;
@@ -112,7 +118,7 @@ int CzyOtworzycKase1(StanSklepu* stan) {
     return stan->kasy_stacjonarne[0].liczba_w_kolejce > 3;
 }
 
-//Funkcja main - punkt wejscia dla procesu kasjera
+//Punkt wejscia dla procesu kasjera
 #ifdef KASJER_STANDALONE
 int main(int argc, char* argv[]) {
     //Sprawdzenie argumentow przekazanych do programu
@@ -152,6 +158,9 @@ int main(int argc, char* argv[]) {
         OdlaczPamiecWspoldzielona(stan_sklepu);
         return 1;
     }
+    
+    //Inicjalizacja systemu logowania
+    InicjalizujSystemLogowania(sciezka);
     
     char buf[256];
     sprintf(buf, "Kasjer [Kasa %d]: Proces uruchomiony, oczekuje na otwarcie kasy.", id_kasy + 1);
@@ -208,8 +217,12 @@ int main(int argc, char* argv[]) {
             int kasa_do_zamkniecia = stan_sklepu->id_kasy_do_zamkniecia;
             ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
             
-            //Sprawdz polecenie zamkniecia od kierownika
-            if (polecenie == 2 && kasa_do_zamkniecia == id_kasy && w_kolejce == 0) {
+            //Sprawdz czy kasa jest w stanie ZAMYKANA i kolejka pusta
+            ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+            StanKasy aktualny_stan = stan_sklepu->kasy_stacjonarne[id_kasy].stan;
+            ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+            
+            if ((aktualny_stan == KASA_ZAMYKANA || (polecenie == 2 && kasa_do_zamkniecia == id_kasy)) && w_kolejce == 0) {
                 sprintf(buf, "Kasjer [Kasa %d]: Polecenie kierownika - zamykam kase.", id_kasy + 1);
                 ZapiszLog(LOG_INFO, buf);
                 
@@ -221,7 +234,7 @@ int main(int argc, char* argv[]) {
                 
                 kasjer->stan = KASJER_ZAMYKA_KASE;
             }
-            //30 sekund bez klienta - zamkniecie kasy
+            //30 sekund bez klienta, zamkniecie kasy
             else if (ostatnia_obsluga > 0 && w_kolejce == 0 && 
                 (teraz - ostatnia_obsluga) >= CZAS_BEZCZYNNOSCI_DO_ZAMKNIECIA) {
                 

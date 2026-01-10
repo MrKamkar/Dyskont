@@ -30,7 +30,6 @@ int ObliczWymaganaLiczbeKas(int liczba_klientow);
 void AktualizujLiczbeKas(StanSklepu* stan, int sem_id);
 
 //Obsluga klienta
-void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow, 
-                                 double suma, int ma_alkohol, int wiek, StanSklepu* stan, int sem_id);
+void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow, double suma, int ma_alkohol, int wiek, StanSklepu* stan, int sem_id);
 
 #endif

@@ -1,4 +1,5 @@
 #include "semafory.h"
+#include <errno.h>
 
 //Inicjalizacja zestawu semaforow
 int InicjalizujSemafory(const char* sciezka) {
@@ -81,7 +82,10 @@ int ZajmijSemafor(int sem_id, int sem_num) {
     operacja.sem_flg = 0;          //Blokujace oczekiwanie
 
     if (semop(sem_id, &operacja, 1) == -1) {
-        perror("Blad zajmowania semafora");
+        //Nie wyswietli bledu gdy semafor zostal usuniety
+        if (errno != EINVAL && errno != EIDRM) {
+            perror("Blad zajmowania semafora");
+        }
         return -1;
     }
 
@@ -96,7 +100,10 @@ int ZwolnijSemafor(int sem_id, int sem_num) {
     operacja.sem_flg = 0;          //Bez flag
 
     if (semop(sem_id, &operacja, 1) == -1) {
-        perror("Blad zwalniania semafora");
+        //Nie wyswietli bledu gdy semafor zostal usuniety
+        if (errno != EINVAL && errno != EIDRM) {
+            perror("Blad zwalniania semafora");
+        }
         return -1;
     }
 

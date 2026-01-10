@@ -1,14 +1,15 @@
 #include "logi.h"
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <fcntl.h>
 
 static int id_kolejki = -1;
-static pid_t pid_loggera = -1;
+static pthread_t watek_loggera;
+static int watek_uruchomiony = 0;
 
-//Petla procesu logujacego
-static void PetlaLoggera() {
-    mkdir("logs", 0700);
+//Petla watku logujacego
+static void* PetlaLoggera(void* arg) {
+    
+    mkdir("logs", 0300);
     
     //Pobranie aktualnego czasu
     time_t teraz = time(NULL);
@@ -22,10 +23,10 @@ static void PetlaLoggera() {
         czas->tm_hour,
         czas->tm_min);
     
-    int deskryptor_pliku = open(sciezka, O_WRONLY | O_CREAT, 0600);
+    int deskryptor_pliku = open(sciezka, O_WRONLY | O_CREAT, 0200);
     if (deskryptor_pliku == -1) {
         perror("Blad otwarcia pliku logow");
-        exit(1);
+        pthread_exit(NULL);
     }
 
     struct KomunikatLog msg;
@@ -49,7 +50,8 @@ static void PetlaLoggera() {
                 prefix = "[INFO] ";
                 kolor = KOLOR_ZIELONY;
                 break;
-            case LOG_OSTRZEZENIE: prefix = "[OSTRZ] ";
+            case LOG_OSTRZEZENIE:
+                prefix = "[OSTRZ] ";
                 kolor = KOLOR_ZOLTY;
                 break;
             case LOG_BLAD:
@@ -75,6 +77,7 @@ static void PetlaLoggera() {
 
         //Wyjscie na ekran z kolorami
         printf("%s%s%s%s%s\n", czas_buf, kolor, prefix, msg.tresc, KOLOR_RESET);
+        fflush(stdout);  //Wymuszenie wypisania
 
         //Zapis do pliku
         char bufor_pliku[512];
@@ -85,7 +88,7 @@ static void PetlaLoggera() {
     }
 
     close(deskryptor_pliku);
-    exit(0);
+    pthread_exit(NULL);
 }
 
 void InicjalizujSystemLogowania(const char* sciezka) {
@@ -104,15 +107,12 @@ void InicjalizujSystemLogowania(const char* sciezka) {
     }
 }
 
-void UruchomProcesLogujacy() {
-    pid_loggera = fork();
-    if (pid_loggera == -1) {
-        perror("Blad fork");
+void UruchomWatekLogujacy() {
+    if (pthread_create(&watek_loggera, NULL, PetlaLoggera, NULL) != 0) {
+        perror("Blad pthread_create");
         exit(1);
     }
-    if (pid_loggera == 0) {
-        PetlaLoggera(); //Proces potomny
-    }
+    watek_uruchomiony = 1;
 }
 
 void ZamknijSystemLogowania() {
@@ -121,10 +121,10 @@ void ZamknijSystemLogowania() {
     msg.typ_komunikatu = TYP_KONIEC;
     msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0);
 
-    //Czekanie na zakonczenie procesu loggera
-    if (pid_loggera != -1) {
-        if (waitpid(pid_loggera, NULL, 0) == -1) {
-            perror("Blad waitpid");
+    //Czekanie na zakonczenie watku loggera
+    if (watek_uruchomiony) {
+        if (pthread_join(watek_loggera, NULL) != 0) {
+            perror("Blad pthread_join");
         }
     }
 
@@ -148,3 +148,4 @@ void ZapiszLog(TypLogu typ_logu, const char* format) {
         perror("Blad msgsnd");
     }
 }
+

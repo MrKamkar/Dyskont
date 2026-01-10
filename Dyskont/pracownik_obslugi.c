@@ -6,7 +6,7 @@
 #include <string.h>
 #include <errno.h>
 
-//Inicjalizacja FIFO - tworzy lacze nazwane
+//Inicjalizacja FIFO, tworzy lacze nazwane
 int InicjalizujFifoObslugi() {
     //Usun istniejace FIFO jesli jest
     unlink(FIFO_OBSLUGA);
@@ -99,11 +99,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
+    //Inicjalizacja systemu logowania
+    InicjalizujSystemLogowania(sciezka);
+    
     ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na FIFO...");
     
     char buf[256];
     
-    //Otwarcie FIFO do odczytu (nieblokujace - pozwala sprawdzac flage ewakuacji)
+    //Otwarcie FIFO do odczytu nieblokujace, pozwala sprawdzac flage ewakuacji
     int fd = open(FIFO_OBSLUGA, O_RDONLY | O_NONBLOCK);
     if (fd == -1) {
         perror("Pracownik: Blad otwarcia FIFO");
@@ -126,7 +129,7 @@ int main(int argc, char* argv[]) {
             //Przetworzenie zadania
             switch (zadanie.typ) {
                 case ZADANIE_ODBLOKUJ_KASE:
-                    sprintf(buf, "Pracownik obslugi: Odblokowuje kase samo [%d] dla klienta [%d]",
+                    sprintf(buf, "Pracownik obslugi: Odblokowuje kase samoobslugowa [%d] dla klienta [%d]",
                             zadanie.id_kasy + 1, zadanie.id_klienta);
                     ZapiszLog(LOG_INFO, buf);
                     
@@ -140,7 +143,7 @@ int main(int argc, char* argv[]) {
                     }
                     ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
                     
-                    sprintf(buf, "Pracownik obslugi: Kasa samo [%d] odblokowana.", zadanie.id_kasy + 1);
+                    sprintf(buf, "Pracownik obslugi: Kasa samoobslugowa [%d] odblokowana.", zadanie.id_kasy + 1);
                     ZapiszLog(LOG_INFO, buf);
                     break;
                     

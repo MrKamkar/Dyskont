@@ -36,20 +36,23 @@ typedef struct {
 #define MAX_PRODUKTOW 50
 
 //Liczba kas
-#define LICZBA_KAS_SAMO 6
+#define LICZBA_KAS_SAMOOBSLUGOWYCH 6
 #define LICZBA_KAS_STACJONARNYCH 2
 
 //Parametry symulacji
 #define MIN_KAS_SAMO_CZYNNYCH 3
 #define KLIENCI_NA_KASE 5  //Parametr K z opisu
 #define MAX_CZAS_OCZEKIWANIA 30 //T w sekundach
+#define MAX_KLIENTOW_ROWNOCZESNIE 100
+#define PRZERWA_MIEDZY_KLIENTAMI_MS 50
 
 //Stany kas
 typedef enum {
     KASA_ZAMKNIETA,
     KASA_WOLNA,
     KASA_ZAJETA,
-    KASA_ZABLOKOWANA
+    KASA_ZABLOKOWANA,
+    KASA_ZAMYKANA    //Kasa zamyka sie, obsluguje tylko klientow juz w kolejce
 } StanKasy;
 
 //Struktura pojedynczej kasy samoobslugowej
@@ -77,7 +80,7 @@ typedef struct {
 //Glowna struktura stanu sklepu w pamieci wspoldzielonej
 typedef struct {
     //Kasy
-    KasaSamoobslugowa kasy_samo[LICZBA_KAS_SAMO];
+    KasaSamoobslugowa kasy_samo[LICZBA_KAS_SAMOOBSLUGOWYCH];
     KasaStacjonarna kasy_stacjonarne[LICZBA_KAS_STACJONARNYCH];
     
     //Kolejka do kas samoobslugowych (wspolna)
@@ -96,6 +99,9 @@ typedef struct {
     int flaga_ewakuacji; //Sygnal 3 od kierownika
     int polecenie_kierownika;    //Polecenie od kierownika (0=brak, 1=otworz, 2=zamknij, 3=ewakuacja)
     int id_kasy_do_zamkniecia;   //Ktora kasa ma byc zamknieta (0 lub 1)
+    
+    //PID glownego procesu (do wysylania sygnalow)
+    pid_t pid_glowny;
     
     //Czas symulacji
     time_t czas_startu;
