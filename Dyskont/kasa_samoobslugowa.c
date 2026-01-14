@@ -142,8 +142,8 @@ void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
     ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
 }
 
-//Obsluga klienta przy kasie samoobslugowej
-void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow, 
+//Obsluga klienta przy kasie samoobslugowej (zwraca 0=sukces, -1=timeout, -2=niepelnoletni)
+int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow, 
                                  double suma, int ma_alkohol, int wiek, StanSklepu* stan, int sem_id) {
     char buf[256];
     
@@ -174,7 +174,18 @@ void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produkto
             WyslijZadanieObslugi(&zadanie);
             
             //Czekaj az pracownik odblokuje kase
+            time_t czas_blokady = time(NULL);
+            int timeout_blokady = 0;
             while (1) {
+                //Sprawdz timeout
+                if (time(NULL) - czas_blokady >= MAX_CZAS_OCZEKIWANIA) {
+                    sprintf(buf, "Kasa samoobslugowa [%d]: Timeout! Pracownik nie podszedl w ciagu %d sek.",
+                            id_kasy + 1, MAX_CZAS_OCZEKIWANIA);
+                    ZapiszLog(LOG_BLAD, buf);
+                    timeout_blokady = 1;
+                    break;
+                }
+                
                 ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
                 StanKasy aktualny_stan = stan->kasy_samo[id_kasy].stan;
                 ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
@@ -183,6 +194,12 @@ void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produkto
                     break;
                 }
                 usleep(100000); //100ms
+            }
+            
+            //Jesli timeout, klient moze isc do stacjonarnej
+            if (timeout_blokady) {
+                ZwolnijKase(id_kasy, stan, sem_id);
+                return -1;  //Timeout - klient powinien isc do kasy stacjonarnej
             }
             
             sprintf(buf, "Kasa samoobslugowa [%d]: Odblokowana przez pracownika obslugi.", id_kasy + 1);
@@ -211,7 +228,7 @@ void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produkto
             sprintf(buf, "Kasa samoobslugowa [%d]: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
                     id_kasy + 1, id_klienta, wiek);
             ZapiszLog(LOG_BLAD, buf);
-            return; //Koniec bez zakupu
+            return -2;  //Niepelnoletni
         } else {
             sprintf(buf, "Kasa samoobslugowa [%d]: Weryfikacja wieku OK (wiek: %d)", id_kasy + 1, wiek);
             ZapiszLog(LOG_INFO, buf);
@@ -222,6 +239,8 @@ void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produkto
     sprintf(buf, "Kasa samoobslugowa [%d]: Klient [ID: %d] zaplacil karta. Suma: %.2f PLN. Paragon wydrukowany.",
             id_kasy + 1, id_klienta, suma);
     ZapiszLog(LOG_INFO, buf);
+    
+    return 0;  //Sukces
 }
 
 //Glowna funkcja procesu kasy samoobslugowej

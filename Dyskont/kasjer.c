@@ -70,8 +70,12 @@ int DodajDoKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, in
     KasaStacjonarna* kasa = &stan->kasy_stacjonarne[id_kasy];
     int wynik = -1;
     
-    //Nie dodawaj do kasy ktora jest zamknieta lub zamykana
-    if (kasa->stan == KASA_ZAMKNIETA || kasa->stan == KASA_ZAMYKANA) {
+    if (kasa->stan == KASA_ZAMYKANA) {
+        ZwolnijSemafor(sem_id, sem_num);
+        return -1;
+    }
+    if (id_kasy == 1 && kasa->stan == KASA_ZAMKNIETA) {
+        //Kasa 2 musi byc otwarta przez kierownika
         ZwolnijSemafor(sem_id, sem_num);
         return -1;
     }

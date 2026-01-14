@@ -9,8 +9,8 @@
 //Czas skanowania jednego produktu (wolniejszy niz kasjer)
 #define CZAS_SKANOWANIA_PRODUKTU_MS 300
 
-//Szansa na losowa blokade kasy (1 na X produktow)
-#define SZANSA_BLOKADY 2
+//Szansa na losowa blokade kasy (1 na X produktow, czyli 10% szans)
+#define SZANSA_BLOKADY 10
 
 //Czas oczekiwania na odblokowaanie kasy (w sekundach)
 #define CZAS_OCZEKIWANIA_NA_ODBLOKOWANIE 5
@@ -29,7 +29,7 @@ void ZwolnijKase(int id_kasy, StanSklepu* stan, int sem_id);
 int ObliczWymaganaLiczbeKas(int liczba_klientow);
 void AktualizujLiczbeKas(StanSklepu* stan, int sem_id);
 
-//Obsluga klienta
-void ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow, double suma, int ma_alkohol, int wiek, StanSklepu* stan, int sem_id);
+//Obsluga klienta (zwraca 0 gdy sukces, -1 gdy timeout blokady, -2 gdy niepelnoletni)
+int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow, double suma, int ma_alkohol, int wiek, StanSklepu* stan, int sem_id);
 
 #endif

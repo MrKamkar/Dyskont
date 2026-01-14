@@ -184,37 +184,22 @@ int main(int argc, char* argv[]) {
         klient->stan = STAN_KOLEJKA_SAMOOBSLUGOWA;
         klient->czas_dolaczenia_do_kolejki = time(NULL);
         
-        //Probuj dolaczic do kolejki (czekaj jesli pelna)
-        time_t czas_startu = time(NULL);
+        //Probuj dolaczic do kolejki samoobslugowej
         int dolaczyl = 0;
         
-        while (!dolaczyl && (time(NULL) - czas_startu) < MAX_CZAS_KOLEJKI) {
-            //Sprawdz ewakuacje
-            ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
-            ewakuacja = stan_sklepu->flaga_ewakuacji;
-            ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
-            if (ewakuacja) {
-                sprintf(buf, "Klient [ID: %d]: EWAKUACJA! Natychmiast opuszcza sklep.", klient->id);
-                ZapiszLog(LOG_OSTRZEZENIE, buf);
-                moze_kupic = 0;
-                kod_bledu = 3;
-                goto wyjscie;
-            }
-            
-            if (DodajDoKolejkiSamoobslugowej(klient->id, stan_sklepu, sem_id) == 0) {
-                dolaczyl = 1;
-                sprintf(buf, "Klient [ID: %d] dolaczyl do kolejki kas samoobslugowych.", klient->id);
-                ZapiszLog(LOG_INFO, buf);
-            } else {
-                //Kolejka pelna, poczekaj i sprobuj ponownie
-                usleep(500000); //500ms
-            }
+        if (DodajDoKolejkiSamoobslugowej(klient->id, stan_sklepu, sem_id) == 0) {
+            dolaczyl = 1;
+            sprintf(buf, "Klient [ID: %d] dolaczyl do kolejki kas samoobslugowych.", klient->id);
+            ZapiszLog(LOG_INFO, buf);
+        } else {
+            //Kolejka pelna - od razu idz do stacjonarnej
+            sprintf(buf, "Klient [ID: %d]: Kolejka samoobslugowa pelna, przechodzi do stacjonarnej.", klient->id);
+            ZapiszLog(LOG_INFO, buf);
+            idzie_do_samoobslugowej = 0;
         }
         
         if (!dolaczyl) {
-            //Timeout, przejdz do stacjonarnej
-            sprintf(buf, "Klient [ID: %d]: Nie udalo sie dolaczyc do kolejki, przechodzi do stacjonarnej.", klient->id);
-            ZapiszLog(LOG_INFO, buf);
+            //Nie dolaczyl, przejdz do stacjonarnej
             idzie_do_samoobslugowej = 0;
         } else {
             
@@ -260,18 +245,24 @@ int main(int argc, char* argv[]) {
                     klient->stan = STAN_PRZY_KASIE;
                     
                     //Obsluz klienta przy kasie samoobslugowej
-                    ObsluzKlientaSamoobslugowo(id_kasy, klient->id, klient->liczba_produktow,
+                    int wynik_obslugi = ObsluzKlientaSamoobslugowo(id_kasy, klient->id, klient->liczba_produktow,
                                                ObliczSumeKoszyka(klient), ma_alkohol, klient->wiek,
                                                stan_sklepu, sem_id);
                     
-                    //Weryfikacja wieku przy alkoholu, jesli niepelnoletni odmowa
-                    if (ma_alkohol && klient->wiek < 18) {
+                    if (wynik_obslugi == -1) {
+                        //Timeout blokady - przejdz do kasy stacjonarnej
+                        sprintf(buf, "Klient [ID: %d]: Timeout blokady kasy, przechodzi do stacjonarnej.", klient->id);
+                        ZapiszLog(LOG_INFO, buf);
+                        idzie_do_samoobslugowej = 0;
+                    } else if (wynik_obslugi == -2) {
+                        //Niepelnoletni z alkoholem
                         moze_kupic = 0;
                         kod_bledu = 1;  //Niepelnoletni
+                        ZwolnijKase(id_kasy, stan_sklepu, sem_id);
+                    } else {
+                        //Sukces - zwolnij kase
+                        ZwolnijKase(id_kasy, stan_sklepu, sem_id);
                     }
-                    
-                    //Zwolnij kase
-                    ZwolnijKase(id_kasy, stan_sklepu, sem_id);
                 } else {
                     //Nie udalo sie zajac kasy, sprobuj stacjonarnej
                     sprintf(buf, "Klient [ID: %d]: Nie udalo sie zajac kasy samoobslugowej, przechodzi do stacjonarnej.", klient->id);

@@ -33,7 +33,7 @@ typedef enum {
 struct KomunikatLog {
     long typ_komunikatu;      //Odpowiednik mtype
     TypLogu typ_logu;         //Typ komunikatu logowania
-    char tresc[256];          //Tresc wiadomosci
+    char tresc[128];          //Tresc wiadomosci
 };
 
 //Funkcje zarzadzajace

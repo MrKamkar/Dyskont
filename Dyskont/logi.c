@@ -140,12 +140,11 @@ void ZapiszLog(TypLogu typ_logu, const char* format) {
     struct KomunikatLog msg;
     msg.typ_komunikatu = 1; //Zwykly komunikat
     msg.typ_logu = typ_logu;
-    strncpy(msg.tresc, format, 255);
-    msg.tresc[255] = '\0';
+    strncpy(msg.tresc, format, 127);
+    msg.tresc[127] = '\0';
 
-    //Wyslanie do kolejki
-    if (msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
-        perror("Blad msgsnd");
-    }
+    //Wyslanie do kolejki bez blokowania
+    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), IPC_NOWAIT);
+    //Bledy ignorowane - kolejka moze byc usunieta podczas zamykania
 }
 
