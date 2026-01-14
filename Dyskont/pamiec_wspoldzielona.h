@@ -46,7 +46,7 @@ typedef struct {
 #define MIN_KAS_SAMO_CZYNNYCH 3
 #define KLIENCI_NA_KASE 5  //Parametr K z opisu
 #define MAX_CZAS_OCZEKIWANIA 30 //T w sekundach
-#define MAX_KLIENTOW_ROWNOCZESNIE 1000
+#define MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE 1000  //Domyslna wartosc
 #define PRZERWA_MIEDZY_KLIENTAMI_MS 50
 
 //Makro do symulacyjnych usleep - pomija sleep gdy tryb_testu == 1
@@ -114,6 +114,9 @@ typedef struct {
     
     //Tryb testu (0=normalny, 1=bez sleepow symulacyjnych)
     int tryb_testu;
+    
+    //Maksymalna liczba klientow rownoczesnie w sklepie
+    int max_klientow_rownoczesnie;
 } StanSklepu;
 
 //Funkcje zarzadzajace pamiecia wspoldzielona

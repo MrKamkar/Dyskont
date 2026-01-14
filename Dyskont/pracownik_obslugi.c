@@ -1,10 +1,7 @@
 #include "pracownik_obslugi.h"
 #include "semafory.h"
 #include "logi.h"
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #include <sys/select.h>
 
 //Inicjalizacja FIFO, tworzy lacze nazwane
@@ -77,13 +74,7 @@ int OdbierzZadanieObslugi(ZadanieObslugi* zadanie) {
 
 //Glowna funkcja procesu pracownika obslugi
 #ifdef PRACOWNIK_STANDALONE
-int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        fprintf(stderr, "Uzycie: %s <sciezka>\n", argv[0]);
-        return 1;
-    }
-    
-    const char* sciezka = argv[1];
+int main() {
     
     //Dolaczenie do pamieci wspoldzielonej
     StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
@@ -100,8 +91,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    //Inicjalizacja systemu logowania
-    InicjalizujSystemLogowania(sciezka);
+    //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
+    InicjalizujSystemLogowania();
     
     ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na FIFO...");
     
@@ -147,11 +138,14 @@ int main(int argc, char* argv[]) {
                         SYMULACJA_USLEEP(stan_sklepu, 500000); //500ms
                         
                         //Odblokowanie kasy w pamieci wspoldzielonej
-                        ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                         if (stan_sklepu->kasy_samo[zadanie.id_kasy].stan == KASA_ZABLOKOWANA) {
                             stan_sklepu->kasy_samo[zadanie.id_kasy].stan = KASA_ZAJETA;
                         }
-                        ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                        
+                        //Sygnal odblokowania - budzi czekajacego klienta
+                        ZwolnijSemafor(sem_id, SEM_ODBLOKUJ_KASA_SAMO(zadanie.id_kasy));
                         
                         sprintf(buf, "Pracownik obslugi: Kasa samoobslugowa [%d] odblokowana.", zadanie.id_kasy + 1);
                         ZapiszLog(LOG_INFO, buf);

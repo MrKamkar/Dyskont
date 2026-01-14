@@ -15,19 +15,40 @@ static StanSklepu* g_stan_sklepu = NULL;
 static int g_sem_id = -1;
 static char g_sciezka[256];
 
+//Globalne zmienne dla obslugi SIGCHLD
+static volatile sig_atomic_t g_aktywnych_klientow = 0;
+static volatile sig_atomic_t g_calkowita_liczba_klientow = 0;
+
+//Handler SIGCHLD - zbiera zakonczone procesy
+void ObslugaSIGCHLD(int sig) {
+    (void)sig;
+    //Zbierz wszystkie zakonczone dzieci bez blokowania
+    int status;
+    while (waitpid(-1, &status, WNOHANG) > 0) {
+        g_aktywnych_klientow--;
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            g_calkowita_liczba_klientow++;
+        }
+    }
+}
+
 //Otwieranie kasy stacjonarnej 2
 void ObslugaSIGUSR1(int sig) {
     (void)sig;
     if (!g_stan_sklepu) return;
     
-    ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     if (g_stan_sklepu->kasy_stacjonarne[1].stan == KASA_ZAMKNIETA) {
         g_stan_sklepu->kasy_stacjonarne[1].stan = KASA_WOLNA;
         g_stan_sklepu->kasy_stacjonarne[1].czas_ostatniej_obslugi = time(NULL);
-        ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        
+        //Sygnal dla kasjera - kasa otwarta
+        ZwolnijSemafor(g_sem_id, SEM_OTWORZ_KASA_STACJ_2);
+        
         ZapiszLog(LOG_INFO, "Kierownik: Sygnal SIGUSR1 - otwarto kase stacjonarna 2.");
     } else {
-        ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: Kasa 2 jest juz otwarta.");
     }
 }
@@ -37,16 +58,16 @@ void ObslugaSIGUSR2(int sig) {
     (void)sig;
     if (!g_stan_sklepu) return;
     
-    ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     //Oznacz kase jako zamykana, nowi klienci nie dolacza
     if (g_stan_sklepu->kasy_stacjonarne[0].stan != KASA_ZAMKNIETA) {
         g_stan_sklepu->kasy_stacjonarne[0].stan = KASA_ZAMYKANA;
         g_stan_sklepu->polecenie_kierownika = 2;  //POLECENIE_ZAMKNIJ_KASE
         g_stan_sklepu->id_kasy_do_zamkniecia = 0;
-        ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         ZapiszLog(LOG_INFO, "Kierownik: Sygnal SIGUSR2 - kasa 1 zamyka sie.");
     } else {
-        ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: Kasa 1 jest juz zamknieta.");
     }
 }
@@ -56,10 +77,10 @@ void ObslugaSIGTERM(int sig) {
     (void)sig;
     if (!g_stan_sklepu) return;
     
-    ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     g_stan_sklepu->flaga_ewakuacji = 1;
     g_stan_sklepu->polecenie_kierownika = 3;  //POLECENIE_EWAKUACJA
-    ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: Sygnal SIGTERM - EWAKUACJA! Klienci opuszczaja sklep.");
 }
@@ -90,9 +111,12 @@ void ObslugaSIGINT(int sig) {
 int main(int argc, char* argv[]) {
     srand(time(NULL));
     
-    //Pobranie czasu symulacji i opcjonalnego trybu testu
+    //Pobranie czasu symulacji i opcjonalnych argumentow
     if (argc < 2) {
-        fprintf(stderr, "Uzycie: %s <czas_symulacji_sekund> <nr_testu>\n", argv[0]);
+        fprintf(stderr, "Uzycie: %s <czas_symulacji_sekund> <nr_testu*> <max_klientow*>\n", argv[0]);
+        fprintf(stderr, "  <czas_symulacji_sekund> - czas trwania symulacji\n");
+        fprintf(stderr, "  <nr_testu*>             - tryb testu (0=normalny, 1=bez sleepow), domyslnie 0\n");
+        fprintf(stderr, "  <max_klientow*>         - max klientow rownoczesnie, domyslnie 1000\n");
         return 1;
     }
     
@@ -112,11 +136,22 @@ int main(int argc, char* argv[]) {
         }
     }
     
+    //Opcjonalny limit klientow rownoczesnie (domyslnie 1000)
+    int max_klientow = MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE;
+    if (argc >= 4) {
+        max_klientow = atoi(argv[3]);
+        if (max_klientow <= 0) {
+            fprintf(stderr, "Blad: Maksymalna liczba klientow musi byc wieksza od 0\n");
+            return 1;
+        }
+    }
+    
     //Zapis sciezki dla handlera sygnalu
     snprintf(g_sciezka, sizeof(g_sciezka), "%s", argv[0]);
     
     //Rejestracja handlerow sygnalow
     signal(SIGINT, ObslugaSIGINT);
+    signal(SIGCHLD, ObslugaSIGCHLD);  //Automatycznie gdy dziecko sie konczy
     signal(SIGUSR1, ObslugaSIGUSR1);  //Sygnal 1, otwieranie kasy 2
     signal(SIGUSR2, ObslugaSIGUSR2);  //Sygnal 2, zamykanie kasy
     signal(SIGTERM, ObslugaSIGTERM);  //Sygnal 3, ewakuacja
@@ -124,6 +159,7 @@ int main(int argc, char* argv[]) {
     //Inicjalizacja systemu logowania
     printf("=== Symulacja Dyskontu ===\n");
     printf("Czas symulacji: %d sekund\n", czas_symulacji_arg);
+    printf("Max klientow rownoczesnie: %d\n", max_klientow);
     if (tryb_testu == 1) {
         printf("TRYB TESTU: Bez sleepow symulacyjnych\n");
     }
@@ -135,9 +171,10 @@ int main(int argc, char* argv[]) {
     ZapiszLog(LOG_INFO, "Inicjalizacja pamieci wspoldzielonej..");
     g_stan_sklepu = InicjalizujPamiecWspoldzielona();
     
-    //Zapisz PID glownego procesu i tryb testu do pamieci wspoldzielonej
+    //Zapisz PID glownego procesu, tryb testu i max klientow do pamieci wspoldzielonej
     g_stan_sklepu->pid_glowny = getpid();
     g_stan_sklepu->tryb_testu = tryb_testu;
+    g_stan_sklepu->max_klientow_rownoczesnie = max_klientow;
     
     ZapiszLog(LOG_INFO, "Pamiec wspoldzielona zainicjalizowana pomyslnie.");
     
@@ -168,7 +205,7 @@ int main(int argc, char* argv[]) {
             char id_str[16];
             sprintf(id_str, "%d", i);
             
-            execl("./kasjer", "kasjer", argv[0], id_str, (char*)NULL);
+            execl("./kasjer", "kasjer", id_str, (char*)NULL);
             
             perror("Blad exec() dla kasjera");
             exit(1);
@@ -199,7 +236,7 @@ int main(int argc, char* argv[]) {
     }
     else if (pid_pracownik == 0) {
         //Proces dziecka, uruchomienie pracownika przez exec
-        execl("./pracownik", "pracownik", argv[0], (char*)NULL);
+        execl("./pracownik", "pracownik", (char*)NULL);
         
         perror("Blad exec() dla pracownika obslugi");
         exit(1);
@@ -227,7 +264,7 @@ int main(int argc, char* argv[]) {
             char id_str[16];
             sprintf(id_str, "%d", i);
             
-            execl("./kasa_samo", "kasa_samo", argv[0], id_str, (char*)NULL);
+            execl("./kasa_samo", "kasa_samo", id_str, (char*)NULL);
             
             perror("Blad exec() dla kasy samoobslugowej");
             exit(1);
@@ -245,56 +282,32 @@ int main(int argc, char* argv[]) {
     
     char buf[256];
     sprintf(buf, "Symulacja bedzie trwac %d sekund. Max klientow rownoczesnie: %d", 
-            CZAS_SYMULACJI_SEK, MAX_KLIENTOW_ROWNOCZESNIE);
+            CZAS_SYMULACJI_SEK, g_stan_sklepu->max_klientow_rownoczesnie);
     ZapiszLog(LOG_INFO, buf);
     
-    //Tablica PID procesow klienckich (cykliczna)
-    pid_t* pid_klientow = malloc(sizeof(pid_t) * MAX_KLIENTOW_ROWNOCZESNIE);
-    int aktywnych_klientow = 0;
-    int nastepny_slot = 0;
+    //Zmienna dla tworzenia procesow
     int id_klienta = 0;
-    int calkowita_liczba_klientow = 0;
     
     time_t czas_startu = time(NULL);
     time_t czas_konca = czas_startu + CZAS_SYMULACJI_SEK;
     
     ZapiszLog(LOG_INFO, "Rozpoczynam ciagla symulacje klientow...");
     
-    //Glowna petla symulacji, tworzenie klientow przez okreslony czas
+    //Ustawienie alarmu co 1 sekunde dla statusu i kontroli czasu
+    alarm(1);
+    signal(SIGALRM, SIG_IGN);  //Ignorujemy SIGALRM, tylko przerywa pause()
+    
+    //Glowna petla symulacji - BEZ POLLINGU!
     while (time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji) {
         
-        //Zbierz zakonczone procesy (nieblokujaco)
-        int status;
-        pid_t zakonczone;
-        while ((zakonczone = waitpid(-1, &status, WNOHANG)) > 0) {
-            aktywnych_klientow--;
-            if (WIFEXITED(status)) {
-                int kod = WEXITSTATUS(status);
-                if (kod == 0) {
-                    sprintf(buf, "Klient [PID: %d] zakonczyl pomyslnie.", zakonczone);
-                    ZapiszLog(LOG_INFO, buf);
-                } else {
-                    const char* opis;
-                    switch (kod) {
-                        case 1: opis = "niepelnoletni z alkoholem"; break;
-                        case 2: opis = "kolejka pelna"; break;
-                        default: opis = "nieznany blad"; break;
-                    }
-                    sprintf(buf, "Klient [PID: %d] zakonczyl: %s (kod %d)", zakonczone, opis, kod);
-                    ZapiszLog(LOG_BLAD, buf);
-                }
-            }
-        }
-        
         //Tworz nowych klientow jesli jest miejsce
-        while (aktywnych_klientow < MAX_KLIENTOW_ROWNOCZESNIE && 
+        while (g_aktywnych_klientow < g_stan_sklepu->max_klientow_rownoczesnie && 
                time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji) {
             
             pid_t pid = fork();
             
             if (pid == -1) {
                 perror("Blad fork()");
-                usleep(10000); // 10ms przerwa przy bledzie
                 break;
             }
             else if (pid == 0) {
@@ -302,59 +315,50 @@ int main(int argc, char* argv[]) {
                 char id_str[16];
                 sprintf(id_str, "%d", id_klienta + 1);
                 
-                execl("./klient", "klient", argv[0], id_str, (char*)NULL);
+                execl("./klient", "klient", id_str, (char*)NULL);
                 
                 perror("Blad exec()");
                 exit(1);
             }
             else {
                 //Proces rodzica
-                pid_klientow[nastepny_slot] = pid;
-                nastepny_slot = (nastepny_slot + 1) % MAX_KLIENTOW_ROWNOCZESNIE;
-                aktywnych_klientow++;
+                g_aktywnych_klientow++;
                 id_klienta++;
-                calkowita_liczba_klientow++;
                 
-                //Krotka przerwa miedzy tworzeniem procesow
-                usleep(PRZERWA_MIEDZY_KLIENTAMI_MS * 1000);
+                //Krotka przerwa miedzy tworzeniem procesow (pomijana w trybie testu)
+                SYMULACJA_USLEEP(g_stan_sklepu, PRZERWA_MIEDZY_KLIENTAMI_MS * 1000);
             }
         }
         
-        //Wyswietlanie statusu co 5 sekund
-        static time_t ostatni_status = 0;
+        //Wyswietlanie statusu co 1 sekunde
         time_t teraz = time(NULL);
-        if (teraz - ostatni_status >= 5) {
-            sprintf(buf, "Symulacja: %ld/%d sek, klientow aktywnych: %d, razem: %d",
-                    teraz - czas_startu, CZAS_SYMULACJI_SEK, aktywnych_klientow, calkowita_liczba_klientow);
-            ZapiszLog(LOG_INFO, buf);
-            ostatni_status = teraz;
-        }
+        sprintf(buf, "Symulacja: %ld/%d sek, klientow aktywnych: %d, utworzono: %d",
+                teraz - czas_startu, CZAS_SYMULACJI_SEK, (int)g_aktywnych_klientow, id_klienta);
+        ZapiszLog(LOG_INFO, buf);
         
-        usleep(10000); // 10ms glowna petla
+        //Blokujace oczekiwanie na sygnal (SIGCHLD, SIGALRM, itp.) - BEZ POLLINGU!
+        alarm(1);  //Nastepny alarm za 1 sek
+        pause();   //Proces zasypia do sygnalu - 0% CPU!
     }
     
-    sprintf(buf, "Koniec symulacji. Czekam na %d pozostalych klientow...", aktywnych_klientow);
+    alarm(0);  //Wylacz alarm
+    
+    sprintf(buf, "Koniec symulacji. Czekam na %d pozostalych klientow...", (int)g_aktywnych_klientow);
     ZapiszLog(LOG_INFO, buf);
     
-    //Oczekiwanie na zakonczenie pozostalych procesow klienckich
-    while (aktywnych_klientow > 0) {
-        int status;
-        pid_t zakonczone = waitpid(-1, &status, 0);
-        if (zakonczone > 0) {
-            aktywnych_klientow--;
-        }
+    //Oczekiwanie na zakonczenie pozostalych procesow klienckich (blokujace)
+    while (g_aktywnych_klientow > 0) {
+        pause();  //Czeka na SIGCHLD
     }
     
-    free(pid_klientow);
-    
-    sprintf(buf, "Symulacja zakonczona. Laczna liczba klientow: %d", calkowita_liczba_klientow);
+    sprintf(buf, "Symulacja zakonczona. Laczna liczba klientow pomyslnie: %d", (int)g_calkowita_liczba_klientow);
     ZapiszLog(LOG_INFO, buf);
     
     //Ustawienie flagi ewakuacji dla kasjerow
     ZapiszLog(LOG_INFO, "Zamykanie procesow kasjerow i kas samoobslugowych..");
-    ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     g_stan_sklepu->flaga_ewakuacji = 1;
-    ZwolnijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     //Oczekiwanie na zakonczenie procesow kasjerow
     for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {

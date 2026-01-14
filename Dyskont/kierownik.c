@@ -1,8 +1,6 @@
 #include "kierownik.h"
 #include "semafory.h"
 #include "logi.h"
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -22,17 +20,20 @@ void WyswietlMenu() {
 void OtworzKase2(StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     if (stan->kasy_stacjonarne[1].stan == KASA_ZAMKNIETA) {
         stan->kasy_stacjonarne[1].stan = KASA_WOLNA;
         stan->kasy_stacjonarne[1].czas_ostatniej_obslugi = time(NULL);
-        ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        
+        //Sygnal dla kasjera - kasa otwarta
+        ZwolnijSemafor(sem_id, SEM_OTWORZ_KASA_STACJ_2);
         
         ZapiszLog(LOG_INFO, "Kierownik: Otwarto kase stacjonarna 2.");
         printf("Kasa stacjonarna 2 zostala otwarta.\n");
     } else {
-        ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         printf("Kasa stacjonarna 2 jest juz otwarta lub zajeta.\n");
     }
 }
@@ -43,10 +44,10 @@ void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
     
     char buf[256];
     
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     StanKasy aktualny_stan = stan->kasy_stacjonarne[id_kasy].stan;
     int w_kolejce = stan->kasy_stacjonarne[id_kasy].liczba_w_kolejce;
-    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     if (aktualny_stan == KASA_ZAMKNIETA) {
         printf("Kasa stacjonarna %d jest juz zamknieta.\n", id_kasy + 1);
@@ -60,15 +61,15 @@ void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
         printf("Kasa %d zostanie zamknieta po obsluzeniu %d klientow.\n", id_kasy + 1, w_kolejce);
         
         //Ustawiamy polecenie, kasjer sam zamknie kase po obsluzeniu
-        ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         stan->polecenie_kierownika = POLECENIE_ZAMKNIJ_KASE;
         stan->id_kasy_do_zamkniecia = id_kasy;
-        ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     } else {
         //Mozna zamknac od razu
-        ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         stan->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
-        ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
         sprintf(buf, "Kierownik: Zamknieto kase stacjonarna %d.", id_kasy + 1);
         ZapiszLog(LOG_INFO, buf);
@@ -80,21 +81,21 @@ void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
 void WydajPolecenie(int polecenie, int id_kasy, StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     stan->polecenie_kierownika = polecenie;
     stan->id_kasy_do_zamkniecia = id_kasy;
     
     if (polecenie == POLECENIE_EWAKUACJA) {
         stan->flaga_ewakuacji = 1;
     }
-    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 }
 
 //Wyswietla status kas
 void PokazStatusKas(StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     printf("\n--- STATUS KAS ---\n");
     printf("Klientow w sklepie: %d\n\n", stan->liczba_klientow_w_sklepie);
@@ -122,19 +123,13 @@ void PokazStatusKas(StanSklepu* stan, int sem_id) {
     printf("  Czynnych: %d/%d\n", czynne, LICZBA_KAS_SAMOOBSLUGOWYCH);
     printf("  W kolejce: %d\n", stan->liczba_w_kolejce_samo);
     
-    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     printf("------------------\n");
 }
 
 //Glowna funkcja procesu kierownika
 #ifdef KIEROWNIK_STANDALONE
-int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        fprintf(stderr, "Uzycie: %s <sciezka>\n", argv[0]);
-        return 1;
-    }
-    
-    const char* sciezka = argv[1];
+int main() {
     
     //Dolaczenie do pamieci wspoldzielonej
     StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
@@ -152,8 +147,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    //Inicjalizacja systemu logowania
-    InicjalizujSystemLogowania(sciezka);
+    //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
+    InicjalizujSystemLogowania();
     
     //Pobierz PID glownego procesu z pamieci wspoldzielonej
     pid_t pid_glowny = stan_sklepu->pid_glowny;

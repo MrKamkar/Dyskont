@@ -2,6 +2,7 @@
 #include "pamiec_wspoldzielona.h"
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
 
 static int id_kolejki = -1;
 static pthread_t watek_loggera;
@@ -33,7 +34,12 @@ static void* PetlaLoggera(void* arg) {
 
     struct KomunikatLog msg;
     while (1) {
-        if (msgrcv(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0, 0) == -1) {
+        ssize_t result = msgrcv(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0, 0);
+        if (result == -1) {
+            //Jesli wywolanie zostalo przerwane przez sygnal, ponow je
+            if (errno == EINTR) {
+                continue;
+            }
             perror("Blad msgrcv");
             break;
         }

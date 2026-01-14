@@ -1,8 +1,6 @@
 #include "kasjer.h"
 #include "semafory.h"
 #include "logi.h"
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 //Tworzy nowego kasjera
@@ -34,7 +32,7 @@ int PobierzKlientaZKolejki(int id_kasy, StanSklepu* stan, int sem_id) {
         return -1;
     }
     
-    ZajmijSemafor(sem_id, SEM_KASY(id_kasy));
+    ZajmijSemafor(sem_id, MUTEX_KASY(id_kasy));
     
     KasaStacjonarna* kasa = &stan->kasy_stacjonarne[id_kasy];
     int id_klienta = -1;
@@ -49,7 +47,7 @@ int PobierzKlientaZKolejki(int id_kasy, StanSklepu* stan, int sem_id) {
         kasa->liczba_w_kolejce--;
     }
     
-    ZwolnijSemafor(sem_id, SEM_KASY(id_kasy));
+    ZwolnijSemafor(sem_id, MUTEX_KASY(id_kasy));
     
     return id_klienta;
 }
@@ -60,7 +58,7 @@ int DodajDoKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, in
         return -1;
     }
     
-    int sem_num = SEM_KASY(id_kasy);
+    int sem_num = MUTEX_KASY(id_kasy);
     
     ZajmijSemafor(sem_id, sem_num);
     
@@ -68,11 +66,6 @@ int DodajDoKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, in
     int wynik = -1;
     
     if (kasa->stan == KASA_ZAMYKANA) {
-        ZwolnijSemafor(sem_id, sem_num);
-        return -1;
-    }
-    if (id_kasy == 1 && kasa->stan == KASA_ZAMKNIETA) {
-        //Kasa 2 musi byc otwarta przez kierownika
         ZwolnijSemafor(sem_id, sem_num);
         return -1;
     }
@@ -131,13 +124,12 @@ int CzyOtworzycKase1(StanSklepu* stan) {
 #ifdef KASJER_STANDALONE
 int main(int argc, char* argv[]) {
     //Sprawdzenie argumentow przekazanych do programu
-    if (argc != 3) {
-        fprintf(stderr, "Uzycie: %s <sciezka> <id_kasy>\n", argv[0]);
+    if (argc != 2) {
+        fprintf(stderr, "Uzycie: %s <id_kasy>\n", argv[0]);
         return 1;
     }
     
-    const char* sciezka = argv[1];
-    int id_kasy = atoi(argv[2]);
+    int id_kasy = atoi(argv[1]);
     
     if (id_kasy < 0 || id_kasy >= LICZBA_KAS_STACJONARNYCH) {
         fprintf(stderr, "Nieprawidlowy ID kasy: %d (dozwolone: 0-%d)\n", 
@@ -168,8 +160,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    //Inicjalizacja systemu logowania
-    InicjalizujSystemLogowania(sciezka);
+    //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
+    InicjalizujSystemLogowania();
     
     char buf[256];
     sprintf(buf, "Kasjer [Kasa %d]: Proces uruchomiony, oczekuje na otwarcie kasy.", id_kasy + 1);
@@ -184,14 +176,48 @@ int main(int argc, char* argv[]) {
             break;
         }
         
-        //Sprawdzenie stanu kasy
-        ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        //Sprawdzenie stanu kasy i polecen
+        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         StanKasy stan_kasy = stan_sklepu->kasy_stacjonarne[id_kasy].stan;
-        ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        int w_kolejce = stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce;
+        int polecenie = stan_sklepu->polecenie_kierownika;
+        int kasa_do_zamkniecia = stan_sklepu->id_kasy_do_zamkniecia;
+        
+        //Reakcja na polecenie zamkniecia - ustaw ZAMYKANA jesli sa klienci
+        if (polecenie == 2 && kasa_do_zamkniecia == id_kasy && stan_kasy != KASA_ZAMKNIETA && stan_kasy != KASA_ZAMYKANA) {
+            if (w_kolejce > 0) {
+                stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMYKANA;
+                stan_kasy = KASA_ZAMYKANA;
+                sprintf(buf, "Kasjer [Kasa %d]: Polecenie zamkniecia - przechodze w tryb ZAMYKANA (kolejka: %d).", id_kasy + 1, w_kolejce);
+                ZapiszLog(LOG_INFO, buf);
+                
+                //Wyczysc polecenie bo juz zareagowalismy (stan ZAMYKANA wystarczy)
+                stan_sklepu->polecenie_kierownika = 0;
+                stan_sklepu->id_kasy_do_zamkniecia = -1;
+            }
+        }
+
+        
+        //Automatyczne otwieranie kasy gdy w kolejce >= 3 osoby (tylko kasa 1)
+        if (id_kasy == 0 && stan_kasy == KASA_ZAMKNIETA && w_kolejce >= 3) {
+            stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_WOLNA;
+            stan_sklepu->kasy_stacjonarne[id_kasy].czas_ostatniej_obslugi = time(NULL);
+            stan_kasy = KASA_WOLNA;
+            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+            
+            sprintf(buf, "Kasjer [Kasa %d]: Automatyczne otwarcie kasy (>= 3 osoby w kolejce).", id_kasy + 1);
+            ZapiszLog(LOG_INFO, buf);
+        } else {
+            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        }
         
         if (stan_kasy == KASA_ZAMKNIETA) {
             kasjer->stan = KASJER_NIEAKTYWNY;
-            usleep(500000); //500ms - kasa zamknieta, czekamy na otwarcie
+            
+            //Blokujace czekanie na sygnal otwarcia kasy (max 2 sek)
+            struct timespec timeout = {2, 0};
+            struct sembuf op = {SEM_OTWORZ_KASA_STACJ(id_kasy), -1, 0};
+            semtimedop(sem_id, &op, 1, &timeout);  //Czeka na sygnal lub timeout
             continue;
         }
         
@@ -209,41 +235,86 @@ int main(int argc, char* argv[]) {
                 int liczba_produktow = 3 + (rand() % 8);
                 double suma = liczba_produktow * 10.0;
                 
-                ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
-                stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAJETA;
+                ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                //Jesli jest ZAMYKANA, nie zmieniaj na ZAJETA (zeby klienci wiedzieli ze nie mozna dolaczac)
+                if (stan_sklepu->kasy_stacjonarne[id_kasy].stan != KASA_ZAMYKANA) {
+                    stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAJETA;
+                }
                 stan_sklepu->kasy_stacjonarne[id_kasy].id_klienta = id_klienta;
-                ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 
                 ObsluzKlienta(kasjer, id_klienta, liczba_produktow, suma, stan_sklepu->tryb_testu);
                 
-                ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
-                stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_WOLNA;
+                ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                //Jesli jest ZAMYKANA, nie zmieniaj na WOLNA (pozostan w ZAMYKANA az do oproznienia kolejki)
+                if (stan_sklepu->kasy_stacjonarne[id_kasy].stan != KASA_ZAMYKANA) {
+                    stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_WOLNA;
+                }
                 stan_sklepu->kasy_stacjonarne[id_kasy].id_klienta = -1;
                 stan_sklepu->kasy_stacjonarne[id_kasy].czas_ostatniej_obslugi = time(NULL);
-                ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             }
         } else {
-            //Timeout - sprawdz czy zamknac kase
+            //Timeout (brak sygnalu na semaforze przez 1 sekunde)
+            
+            //Sprawdz stan kolejki - jesli sa ludzie, a semafor timeoutowal, to mamy desynchronizacje!
+            ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+            KasaStacjonarna* kasa = &stan_sklepu->kasy_stacjonarne[id_kasy];
+            int w_kolejce_check = kasa->liczba_w_kolejce;
+            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+            
+            if (w_kolejce_check > 0) {
+                //Awaryjna obsluga - semafor "zgubil" klientow
+                //ZapiszLog(LOG_DEBUG, "Kasjer [Kasa %d]: Obsluga w trybie polling (semafor=0, kolejka>0).");
+                
+                int id_klienta = PobierzKlientaZKolejki(id_kasy, stan_sklepu, sem_id);
+                if (id_klienta != -1) {
+                    int liczba_produktow = 3 + (rand() % 8);
+                    double suma = liczba_produktow * 10.0;
+                    
+                    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                    //Jesli jest ZAMYKANA, nie zmieniaj na ZAJETA
+                    if (stan_sklepu->kasy_stacjonarne[id_kasy].stan != KASA_ZAMYKANA) {
+                        stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAJETA;
+                    }
+                    stan_sklepu->kasy_stacjonarne[id_kasy].id_klienta = id_klienta;
+                    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                    
+                    ObsluzKlienta(kasjer, id_klienta, liczba_produktow, suma, stan_sklepu->tryb_testu);
+                    
+                    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                    //Jesli jest ZAMYKANA, nie zmieniaj na WOLNA
+                    if (stan_sklepu->kasy_stacjonarne[id_kasy].stan != KASA_ZAMYKANA) {
+                        stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_WOLNA;
+                    }
+                    stan_sklepu->kasy_stacjonarne[id_kasy].id_klienta = -1;
+                    stan_sklepu->kasy_stacjonarne[id_kasy].czas_ostatniej_obslugi = time(NULL);
+                    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                }
+                continue; //Wroc do petli
+            }
+
+            //Standardowa logika zamykania (gdy kolejka pusta)
             time_t teraz = time(NULL);
             
-            ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
-            KasaStacjonarna* kasa = &stan_sklepu->kasy_stacjonarne[id_kasy];
+            ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+            kasa = &stan_sklepu->kasy_stacjonarne[id_kasy];
             time_t ostatnia_obsluga = kasa->czas_ostatniej_obslugi;
             int w_kolejce = kasa->liczba_w_kolejce;
             int polecenie = stan_sklepu->polecenie_kierownika;
             int kasa_do_zamkniecia = stan_sklepu->id_kasy_do_zamkniecia;
             StanKasy aktualny_stan = kasa->stan;
-            ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             
             if ((aktualny_stan == KASA_ZAMYKANA || (polecenie == 2 && kasa_do_zamkniecia == id_kasy)) && w_kolejce == 0) {
                 sprintf(buf, "Kasjer [Kasa %d]: Polecenie kierownika - zamykam kase.", id_kasy + 1);
                 ZapiszLog(LOG_INFO, buf);
                 
-                ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
                 stan_sklepu->polecenie_kierownika = 0;  //Wyczysc polecenie
                 stan_sklepu->id_kasy_do_zamkniecia = -1;
-                ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 
                 kasjer->stan = KASJER_ZAMYKA_KASE;
             }
@@ -255,9 +326,9 @@ int main(int argc, char* argv[]) {
                         id_kasy + 1, CZAS_BEZCZYNNOSCI_DO_ZAMKNIECIA);
                 ZapiszLog(LOG_INFO, buf);
                 
-                ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
-                ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 
                 kasjer->stan = KASJER_ZAMYKA_KASE;
             }

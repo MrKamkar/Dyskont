@@ -142,4 +142,7 @@ void WyczyscStanSklepu(StanSklepu* stan) {
 
     //Zapisanie czasu startu
     stan->czas_startu = time(NULL);
+    
+    //Ustawienie domyslnej wartosci max klientow rownoczesnie
+    stan->max_klientow_rownoczesnie = MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE;
 }

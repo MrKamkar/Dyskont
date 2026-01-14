@@ -1,7 +1,6 @@
 #ifndef KASJER_H
 #define KASJER_H
 
-#include <sys/types.h>
 #include <unistd.h>
 #include <time.h>
 #include "pamiec_wspoldzielona.h"

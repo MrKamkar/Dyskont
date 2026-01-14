@@ -1,6 +1,5 @@
 #include "semafory.h"
 #include "pamiec_wspoldzielona.h"
-#include <errno.h>
 
 //Generowanie klucza dla semaforow
 static key_t GenerujKlucz() {
@@ -39,16 +38,26 @@ int InicjalizujSemafory() {
     union semun arg;
     unsigned short wartosci[SEM_LICZBA];
     
-    //Mutexy binarne (wartość 1)
-    wartosci[SEM_PAMIEC_WSPOLDZIELONA] = 1;
-    wartosci[SEM_KOLEJKA_SAMO] = 1;
-    wartosci[SEM_KASA_STACJONARNA_1] = 1;
-    wartosci[SEM_KASA_STACJONARNA_2] = 1;
+    //Mutexy binarne (wartosc 1 = wolny)
+    wartosci[MUTEX_PAMIEC_WSPOLDZIELONA] = 1;
+    wartosci[MUTEX_KOLEJKA_SAMO] = 1;
+    wartosci[MUTEX_KASA_STACJONARNA_1] = 1;
+    wartosci[MUTEX_KASA_STACJONARNA_2] = 1;
     
     //Semafory zliczajace
     wartosci[SEM_WOLNE_KASY_SAMO] = 3;     //3 kasy otwarte na start (MIN_KAS_SAMO_CZYNNYCH)
     wartosci[SEM_KLIENCI_KOLEJKA_1] = 0;   //Brak klientow na start
     wartosci[SEM_KLIENCI_KOLEJKA_2] = 0;   //Brak klientow na start
+    
+    //Semafory sygnalizacyjne (wartosc 0 = brak sygnalu)
+    wartosci[SEM_ODBLOKUJ_KASA_SAMO_0] = 0;
+    wartosci[SEM_ODBLOKUJ_KASA_SAMO_1] = 0;
+    wartosci[SEM_ODBLOKUJ_KASA_SAMO_2] = 0;
+    wartosci[SEM_ODBLOKUJ_KASA_SAMO_3] = 0;
+    wartosci[SEM_ODBLOKUJ_KASA_SAMO_4] = 0;
+    wartosci[SEM_ODBLOKUJ_KASA_SAMO_5] = 0;
+    wartosci[SEM_OTWORZ_KASA_STACJ_1] = 0;
+    wartosci[SEM_OTWORZ_KASA_STACJ_2] = 0;
     
     arg.array = wartosci;
     

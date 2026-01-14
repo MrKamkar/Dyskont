@@ -2,15 +2,13 @@
 #include "pracownik_obslugi.h"
 #include "semafory.h"
 #include "logi.h"
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 //Dodaje klienta do wspolnej kolejki samoobslugowej
 int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
     if (!stan) return -1;
     
-    ZajmijSemafor(sem_id, SEM_KOLEJKA_SAMO);
+    ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
     
     int wynik = -1;
     if (stan->liczba_w_kolejce_samo < MAX_KOLEJKA_SAMO) {
@@ -19,7 +17,7 @@ int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
         wynik = 0;
     }
     
-    ZwolnijSemafor(sem_id, SEM_KOLEJKA_SAMO);
+    ZwolnijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
     return wynik;
 }
 
@@ -27,7 +25,7 @@ int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
 int PobierzZKolejkiSamoobslugowej(StanSklepu* stan, int sem_id) {
     if (!stan) return -1;
     
-    ZajmijSemafor(sem_id, SEM_KOLEJKA_SAMO);
+    ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
     
     int id_klienta = -1;
     if (stan->liczba_w_kolejce_samo > 0) {
@@ -40,7 +38,7 @@ int PobierzZKolejkiSamoobslugowej(StanSklepu* stan, int sem_id) {
         stan->liczba_w_kolejce_samo--;
     }
     
-    ZwolnijSemafor(sem_id, SEM_KOLEJKA_SAMO);
+    ZwolnijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
     return id_klienta;
 }
 
@@ -48,7 +46,7 @@ int PobierzZKolejkiSamoobslugowej(StanSklepu* stan, int sem_id) {
 int ZnajdzWolnaKase(StanSklepu* stan, int sem_id) {
     if (!stan) return -1;
     
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     int wolna_kasa = -1;
     for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
@@ -58,7 +56,7 @@ int ZnajdzWolnaKase(StanSklepu* stan, int sem_id) {
         }
     }
     
-    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     return wolna_kasa;
 }
 
@@ -66,7 +64,7 @@ int ZnajdzWolnaKase(StanSklepu* stan, int sem_id) {
 int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
     if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) return -1;
     
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     int wynik = -1;
     if (stan->kasy_samo[id_kasy].stan == KASA_WOLNA) {
@@ -76,7 +74,7 @@ int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
         wynik = 0;
     }
     
-    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     return wynik;
 }
 
@@ -84,11 +82,11 @@ int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
 void ZwolnijKase(int id_kasy, StanSklepu* stan, int sem_id) {
     if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) return;
     
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     stan->kasy_samo[id_kasy].stan = KASA_WOLNA;
     stan->kasy_samo[id_kasy].id_klienta = -1;
     stan->kasy_samo[id_kasy].czas_rozpoczecia = 0;
-    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     //Sygnal dla czekajacych klientow - jest wolna kasa
     ZwolnijSemafor(sem_id, SEM_WOLNE_KASY_SAMO);
@@ -106,7 +104,7 @@ int ObliczWymaganaLiczbeKas(int liczba_klientow) {
 void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     int liczba_klientow = stan->liczba_klientow_w_sklepie;
     int wymagane = ObliczWymaganaLiczbeKas(liczba_klientow);
@@ -142,7 +140,7 @@ void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
         stan->liczba_czynnych_kas_samo = aktualne;
     }
     
-    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 }
 
 //Obsluga klienta przy kasie samoobslugowej
@@ -165,9 +163,9 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
                     id_kasy + 1);
             ZapiszLog(LOG_OSTRZEZENIE, buf);
             
-            ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+            ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             stan->kasy_samo[id_kasy].stan = KASA_ZABLOKOWANA;
-            ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             
             //Wyslanie zadania do pracownika obslugi przez FIFO
             ZadanieObslugi zadanie;
@@ -177,27 +175,28 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
             zadanie.wiek_klienta = wiek;
             WyslijZadanieObslugi(&zadanie);
             
-            //Czekaj az pracownik odblokuje kase
-            time_t czas_blokady = time(NULL);
+            //Czekaj az pracownik odblokuje kase - blokujacy semafor zamiast polling
             int timeout_blokady = 0;
-            while (1) {
-                //Sprawdz timeout
-                if (time(NULL) - czas_blokady >= MAX_CZAS_OCZEKIWANIA) {
-                    sprintf(buf, "Kasa samoobslugowa [%d]: Timeout! Pracownik nie podszedl w ciagu %d sek.",
-                            id_kasy + 1, MAX_CZAS_OCZEKIWANIA);
-                    ZapiszLog(LOG_BLAD, buf);
-                    timeout_blokady = 1;
+            int pozostaly_czas = MAX_CZAS_OCZEKIWANIA;
+            
+            while (pozostaly_czas > 0) {
+                //Blokujace czekanie na sygnal odblokowania (max 1 sek)
+                struct timespec timeout = {1, 0};
+                struct sembuf op = {SEM_ODBLOKUJ_KASA_SAMO(id_kasy), -1, 0};
+                
+                if (semtimedop(sem_id, &op, 1, &timeout) == 0) {
+                    //Otrzymano sygnal odblokowania
                     break;
                 }
-                
-                ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
-                StanKasy aktualny_stan = stan->kasy_samo[id_kasy].stan;
-                ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
-                
-                if (aktualny_stan != KASA_ZABLOKOWANA) {
-                    break;
-                }
-                usleep(100000); //100ms
+                //Timeout - sprawdz czy uplynelo MAX_CZAS_OCZEKIWANIA
+                pozostaly_czas--;
+            }
+            
+            if (pozostaly_czas <= 0) {
+                sprintf(buf, "Kasa samoobslugowa [%d]: Timeout! Pracownik nie podszedl w ciagu %d sek.",
+                        id_kasy + 1, MAX_CZAS_OCZEKIWANIA);
+                ZapiszLog(LOG_BLAD, buf);
+                timeout_blokady = 1;
             }
             
             //Jesli timeout, klient moze isc do stacjonarnej
@@ -250,13 +249,12 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
 //Glowna funkcja procesu kasy samoobslugowej
 #ifdef KASA_SAMO_STANDALONE
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        fprintf(stderr, "Uzycie: %s <sciezka> <id_kasy>\n", argv[0]);
+    if (argc != 2) {
+        fprintf(stderr, "Uzycie: %s <id_kasy>\n", argv[0]);
         return 1;
     }
     
-    const char* sciezka = argv[1];
-    int id_kasy = atoi(argv[2]);
+    int id_kasy = atoi(argv[1]);
     
     if (id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) {
         fprintf(stderr, "Nieprawidlowy ID kasy: %d (dozwolone: 0-%d)\n", 
@@ -279,8 +277,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    //Inicjalizacja systemu logowania
-    InicjalizujSystemLogowania(sciezka);
+    //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
+    InicjalizujSystemLogowania();
     
     srand(time(NULL) ^ getpid());
     
@@ -288,7 +286,7 @@ int main(int argc, char* argv[]) {
     sprintf(buf, "Kasa samoobslugowa [%d]: Proces uruchomiony.", id_kasy + 1);
     ZapiszLog(LOG_INFO, buf);
     
-    //Glowna petla
+    //Glowna petla - proces monitorujacy, uzywa semtimedop z timeoutem
     while (1) {
         //Sprawdzenie flagi ewakuacji
         if (stan_sklepu->flaga_ewakuacji) {
@@ -298,23 +296,20 @@ int main(int argc, char* argv[]) {
         }
         
         //Sprawdzenie stanu kasy
-        ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         StanKasy stan_kasy = stan_sklepu->kasy_samo[id_kasy].stan;
-        ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
-        if (stan_kasy == KASA_ZAMKNIETA) {
-            usleep(500000); //500ms
-            continue;
-        }
-        
-        //Kasa jest wolna - mozna obsluzyc klienta z kolejki
+        //Kasa jest wolna - aktualizuj liczbe kas
         if (stan_kasy == KASA_WOLNA) {
-            //Aktualizacja liczby kas
             AktualizujLiczbeKas(stan_sklepu, sem_id);
-            usleep(100000); //100ms
         }
         
-        usleep(100000); //100ms
+        //Blokujace czekanie z timeoutem (2 sekundy) zamiast usleep
+        //Uzywamy semafora ktory nigdy nie jest sygnalizowany - czyste czekanie z timeoutem
+        struct timespec timeout = {2, 0};
+        struct sembuf op = {SEM_ODBLOKUJ_KASA_SAMO(id_kasy), -1, IPC_NOWAIT};
+        semtimedop(sem_id, &op, 1, &timeout);  //Zawsze timeout, ale CPU nie polluje
     }
     
     OdlaczPamiecWspoldzielona(stan_sklepu);

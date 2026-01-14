@@ -1,7 +1,6 @@
 #ifndef KASA_SAMOOBSLUGOWA_H
 #define KASA_SAMOOBSLUGOWA_H
 
-#include <sys/types.h>
 #include <unistd.h>
 #include <time.h>
 #include "pamiec_wspoldzielona.h"

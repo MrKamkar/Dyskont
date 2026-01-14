@@ -101,13 +101,12 @@ double ObliczSumeKoszyka(const Klient* k) {
 #ifdef KLIENT_STANDALONE
 int main(int argc, char* argv[]) {
     //Sprawdzenie argumentow
-    if (argc != 3) {
-        fprintf(stderr, "Uzycie: %s <sciezka> <id_klienta>\n", argv[0]);
+    if (argc != 2) {
+        fprintf(stderr, "Uzycie: %s <id_klienta>\n", argv[0]);
         return 1;
     }
 
-    const char* sciezka = argv[1];
-    int id_klienta = atoi(argv[2]);
+    int id_klienta = atoi(argv[1]);
 
     //Dolaczenie do pamieci wspoldzielonej
     StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
@@ -124,8 +123,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    //Inicjalizacja systemu logowania (dolaczenie do kolejki komunikatow)
-    InicjalizujSystemLogowania(sciezka);
+    //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
+    InicjalizujSystemLogowania();
 
     //Utworzenie klienta
     srand(time(NULL) ^ getpid()); //Seed dla losowosci
@@ -143,9 +142,9 @@ int main(int argc, char* argv[]) {
     ZapiszLog(LOG_INFO, buf);
 
     //Sekcja krytyczna, zwiekszenie licznika klientow
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     stan_sklepu->liczba_klientow_w_sklepie++;
-    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 
     //Zakupy bez sekcji krytycznej, tylko odczyt z magazynu
     ZapiszLog(LOG_INFO, "Klient rozpoczyna zakupy..");
@@ -161,9 +160,9 @@ int main(int argc, char* argv[]) {
     int ma_alkohol = CzyZawieraAlkohol(klient);
 
     //Sprawdz czy nie ma ewakuacji
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     int ewakuacja = stan_sklepu->flaga_ewakuacji;
-    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     if (ewakuacja) {
         sprintf(buf, "Klient [ID: %d]: EWAKUACJA! Natychmiast opuszcza sklep.", klient->id);
@@ -208,9 +207,9 @@ int main(int argc, char* argv[]) {
             
             while (id_kasy == -1) {
                 //Sprawdz ewakuacje
-                ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 ewakuacja = stan_sklepu->flaga_ewakuacji;
-                ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 if (ewakuacja) {
                     sprintf(buf, "Klient [ID: %d]: EWAKUACJA! Natychmiast opuszcza sklep.", klient->id);
                     ZapiszLog(LOG_OSTRZEZENIE, buf);
@@ -226,7 +225,28 @@ int main(int argc, char* argv[]) {
                             klient->id, MAX_CZAS_KOLEJKI);
                     ZapiszLog(LOG_INFO, buf);
                     
-                    //Usun z kolejki samoobslugowej
+                    //Faktyczne usuniecie z kolejki samoobslugowej
+                    ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
+                    int znaleziono = 0;
+                    for (int i = 0; i < stan_sklepu->liczba_w_kolejce_samo; i++) {
+                        if (stan_sklepu->kolejka_samo[i] == klient->id) {
+                            //Przesuniecie reszty kolejki
+                            for (int j = i; j < stan_sklepu->liczba_w_kolejce_samo - 1; j++) {
+                                stan_sklepu->kolejka_samo[j] = stan_sklepu->kolejka_samo[j + 1];
+                            }
+                            stan_sklepu->liczba_w_kolejce_samo--;
+                            znaleziono = 1;
+                            break;
+                        }
+                    }
+                    ZwolnijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
+                    
+                    if (znaleziono) {
+                        sprintf(buf, "Klient [ID: %d]: Usunieto z kolejki samoobslugowej (pozostalo: %d).",
+                                klient->id, stan_sklepu->liczba_w_kolejce_samo);
+                        ZapiszLog(LOG_INFO, buf);
+                    }
+                    
                     idzie_do_samoobslugowej = 0;
                     break;
                 }
@@ -285,24 +305,17 @@ int main(int argc, char* argv[]) {
         ZapiszLog(LOG_INFO, buf);
         
         //Sprawdz status obu kas stacjonarnych
-        ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         StanKasy stan_kasy1 = stan_sklepu->kasy_stacjonarne[0].stan;
         StanKasy stan_kasy2 = stan_sklepu->kasy_stacjonarne[1].stan;
         int kolejka1 = stan_sklepu->kasy_stacjonarne[0].liczba_w_kolejce;
         int kolejka2 = stan_sklepu->kasy_stacjonarne[1].liczba_w_kolejce;
+        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
-        //Jesli kolejka kasy 2 > 3 osoby i kasa 1 zamknieta, otworz kase 1
-        if (stan_kasy1 == KASA_ZAMKNIETA && kolejka2 > 3) {
-            stan_sklepu->kasy_stacjonarne[0].stan = KASA_WOLNA;
-            stan_sklepu->kasy_stacjonarne[0].czas_ostatniej_obslugi = time(NULL);
-            stan_kasy1 = KASA_WOLNA;
-            ZapiszLog(LOG_INFO, "Kasa stacjonarna 1 zostala otwarta (> 3 osoby w kolejce kasy 2).");
-        }
-        ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
-        
-        //Kasa 2 jest domyslna, kasa 1 jest zapasowa
-        int kasa1_dostepna = (stan_kasy1 == KASA_WOLNA || stan_kasy1 == KASA_ZAJETA);
-        int kasa2_dostepna = (stan_kasy2 == KASA_WOLNA || stan_kasy2 == KASA_ZAJETA);
+
+        //KASA_ZAMYKANA nie jest dostepna, gdyz konczy obsluge
+        int kasa1_dostepna = (stan_kasy1 != KASA_ZAMYKANA);
+        int kasa2_dostepna = (stan_kasy2 != KASA_ZAMYKANA && stan_kasy2 != KASA_ZAMKNIETA);
         
         int wybrana_kasa = -1;  //Brak wyboru
         
@@ -369,12 +382,13 @@ wyjscie:
     klient->stan = STAN_WYJSCIE;
     
     //Sekcja krytyczna, zmniejszenie licznika klientow
-    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     stan_sklepu->liczba_klientow_w_sklepie--;
-    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 
     if (moze_kupic) {
         sprintf(buf, "Klient [ID: %d] opuscil sklep po dokonaniu zakupow.", klient->id);
+        ZapiszLog(LOG_INFO, buf);
     } else {
         const char* powod;
         switch (kod_bledu) {
@@ -384,8 +398,8 @@ wyjscie:
             default: powod = "nieznany"; break;
         }
         sprintf(buf, "Klient [ID: %d] opuscil sklep BEZ zakupow (powod: %s).", klient->id, powod);
+        ZapiszLog(LOG_BLAD, buf);
     }
-    ZapiszLog(LOG_INFO, buf);
 
     //Czyszczenie
     UsunKlienta(klient);
