@@ -39,12 +39,18 @@ typedef struct {
 #define LICZBA_KAS_SAMOOBSLUGOWYCH 6
 #define LICZBA_KAS_STACJONARNYCH 2
 
+//Sciezka do pliku dla ftok() - wspolna dla wszystkich procesow
+#define IPC_SCIEZKA "./dyskont.out"
+
 //Parametry symulacji
 #define MIN_KAS_SAMO_CZYNNYCH 3
 #define KLIENCI_NA_KASE 5  //Parametr K z opisu
 #define MAX_CZAS_OCZEKIWANIA 30 //T w sekundach
-#define MAX_KLIENTOW_ROWNOCZESNIE 100
+#define MAX_KLIENTOW_ROWNOCZESNIE 1000
 #define PRZERWA_MIEDZY_KLIENTAMI_MS 50
+
+//Makro do symulacyjnych usleep - pomija sleep gdy tryb_testu == 1
+#define SYMULACJA_USLEEP(stan, us) do { if ((stan)->tryb_testu == 0) usleep(us); } while(0)
 
 //Stany kas
 typedef enum {
@@ -52,7 +58,7 @@ typedef enum {
     KASA_WOLNA,
     KASA_ZAJETA,
     KASA_ZABLOKOWANA,
-    KASA_ZAMYKANA    //Kasa zamyka sie, obsluguje tylko klientow juz w kolejce
+    KASA_ZAMYKANA
 } StanKasy;
 
 //Struktura pojedynczej kasy samoobslugowej
@@ -105,13 +111,16 @@ typedef struct {
     
     //Czas symulacji
     time_t czas_startu;
+    
+    //Tryb testu (0=normalny, 1=bez sleepow symulacyjnych)
+    int tryb_testu;
 } StanSklepu;
 
 //Funkcje zarzadzajace pamiecia wspoldzielona
-StanSklepu* InicjalizujPamiecWspoldzielona(const char* sciezka);
-StanSklepu* DolaczPamiecWspoldzielona(const char* sciezka);
+StanSklepu* InicjalizujPamiecWspoldzielona();
+StanSklepu* DolaczPamiecWspoldzielona();
 void OdlaczPamiecWspoldzielona(StanSklepu* stan);
-void UsunPamiecWspoldzielona(const char* sciezka);
+void UsunPamiecWspoldzielona();
 
 //Funkcje pomocnicze
 void WyczyscStanSklepu(StanSklepu* stan);

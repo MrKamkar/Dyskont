@@ -62,9 +62,8 @@ void ZrobZakupy(Klient* k, const StanSklepu* stan_sklepu) {
     //Po prostu wypelniamy koszyk do zaplanowanej ilosci
     while (k->liczba_produktow < k->ilosc_planowana) {
         
-        //Symulacja namyslu
-        int czas_namyslu_ms = 100 + (rand() % 401);
-        usleep(czas_namyslu_ms * 1000);  //od 100 do 500 ms
+        //Symulacja namyslu (pomijana w trybie testu 1)
+        SYMULACJA_USLEEP(stan_sklepu, (100 + (rand() % 401)) * 1000);
 
         //Wybor produktu (roznorodnosc)
         int indeks = 0;
@@ -111,14 +110,14 @@ int main(int argc, char* argv[]) {
     int id_klienta = atoi(argv[2]);
 
     //Dolaczenie do pamieci wspoldzielonej
-    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona(sciezka);
+    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
     if (!stan_sklepu) {
         fprintf(stderr, "Klient [%d]: Nie mozna dolaczyc do pamieci wspoldzielonej\n", id_klienta);
         return 1;
     }
 
     //Dolaczenie do semaforow
-    int sem_id = DolaczSemafory(sciezka);
+    int sem_id = DolaczSemafory();
     if (sem_id == -1) {
         fprintf(stderr, "Klient [%d]: Nie mozna dolaczyc do semaforow\n", id_klienta);
         OdlaczPamiecWspoldzielona(stan_sklepu);
@@ -203,7 +202,7 @@ int main(int argc, char* argv[]) {
             idzie_do_samoobslugowej = 0;
         } else {
             
-            //Czekaj na wolna kase z timeoutem T
+            //Czekaj na wolna kase - blokujacy semafor
             int id_kasy = -1;
             time_t czas_startu_oczekiwania = time(NULL);
             
@@ -232,11 +231,18 @@ int main(int argc, char* argv[]) {
                     break;
                 }
                 
-                //Szukaj wolnej kasy
-                id_kasy = ZnajdzWolnaKase(stan_sklepu, sem_id);
-                if (id_kasy == -1) {
-                    usleep(200000); //200ms
+                //Blokujace czekanie na wolna kase (max 1 sek)
+                struct timespec timeout = {1, 0};  //1 sekunda
+                struct sembuf op = {SEM_WOLNE_KASY_SAMO, -1, 0};
+                if (semtimedop(sem_id, &op, 1, &timeout) == 0) {
+                    //Semafor zajety - jest wolna kasa
+                    id_kasy = ZnajdzWolnaKase(stan_sklepu, sem_id);
+                    if (id_kasy == -1) {
+                        //Ktos inny zajal kase, oddaj semafor i probuj ponownie
+                        ZwolnijSemafor(sem_id, SEM_WOLNE_KASY_SAMO);
+                    }
                 }
+                //Jesli timeout (EAGAIN) - kontynuuj petle, sprawdzi ewakuacje/timeout
             }
             
             if (id_kasy != -1 && idzie_do_samoobslugowej) {
@@ -285,68 +291,77 @@ int main(int argc, char* argv[]) {
         int kolejka1 = stan_sklepu->kasy_stacjonarne[0].liczba_w_kolejce;
         int kolejka2 = stan_sklepu->kasy_stacjonarne[1].liczba_w_kolejce;
         
-        //Jesli > 3 osoby w kolejce i kasa 1 zamknieta, otworz ja
-        if (stan_kasy1 == KASA_ZAMKNIETA && kolejka1 > 3) {
+        //Jesli kolejka kasy 2 > 3 osoby i kasa 1 zamknieta, otworz kase 1
+        if (stan_kasy1 == KASA_ZAMKNIETA && kolejka2 > 3) {
             stan_sklepu->kasy_stacjonarne[0].stan = KASA_WOLNA;
             stan_sklepu->kasy_stacjonarne[0].czas_ostatniej_obslugi = time(NULL);
             stan_kasy1 = KASA_WOLNA;
-            ZapiszLog(LOG_INFO, "Kasa stacjonarna 1 zostala otwarta (> 3 osoby czekaja).");
+            ZapiszLog(LOG_INFO, "Kasa stacjonarna 1 zostala otwarta (> 3 osoby w kolejce kasy 2).");
         }
         ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
         
-        //Wybor kasy: jesli obie otwarte, wybierz krotsza kolejke
-        int wybrana_kasa = 0;  //Domyslnie kasa 1
-        
+        //Kasa 2 jest domyslna, kasa 1 jest zapasowa
         int kasa1_dostepna = (stan_kasy1 == KASA_WOLNA || stan_kasy1 == KASA_ZAJETA);
         int kasa2_dostepna = (stan_kasy2 == KASA_WOLNA || stan_kasy2 == KASA_ZAJETA);
         
-        if (kasa1_dostepna && kasa2_dostepna) {
-            //Obie kasy otwarte, wybierz krotsza kolejke
-            if (kolejka2 < kolejka1) {
+        int wybrana_kasa = -1;  //Brak wyboru
+        
+        if (kasa2_dostepna) {
+            //Kasa 2 jest glowna - idz tam najpierw
+            if (kasa1_dostepna && kolejka1 < kolejka2) {
+                wybrana_kasa = 0;  //Kasa 1 ma krotsza kolejke
+            } else {
                 wybrana_kasa = 1;  //Kasa 2
             }
-        } else if (kasa2_dostepna && !kasa1_dostepna) {
-            wybrana_kasa = 1;  //Tylko kasa 2 dostepna
+        } else if (kasa1_dostepna) {
+            wybrana_kasa = 0;  //Tylko kasa 1 dostepna
         }
         
-        //Dolacz do wybranej kolejki
-        klient->stan = (wybrana_kasa == 0) ? STAN_KOLEJKA_KASA_1 : STAN_KOLEJKA_KASA_2;
-        klient->czas_dolaczenia_do_kolejki = time(NULL);
-        
-        if (DodajDoKolejkiStacjonarnej(wybrana_kasa, klient->id, stan_sklepu, sem_id) == 0) {
-            sprintf(buf, "Klient [ID: %d] dolaczyl do kolejki kasy stacjonarnej %d.", klient->id, wybrana_kasa + 1);
-            ZapiszLog(LOG_INFO, buf);
-            
-            //Czekaj na obsluge
-            int czas_oczekiwania = 2 + (rand() % 5); //2-6 sekund
-            sleep(czas_oczekiwania);
-            
-            klient->stan = STAN_PRZY_KASIE;
-            
-            //Weryfikacja alkoholu przy kasie stacjonarnej
-            if (ma_alkohol) {
-                if (klient->wiek < 18) {
-                    sprintf(buf, "Kasa stacjonarna: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
-                            klient->id, klient->wiek);
-                    ZapiszLog(LOG_BLAD, buf);
-                    moze_kupic = 0;
-                    kod_bledu = 1;  //Niepelnoletni
-                } else {
-                    sprintf(buf, "Kasa stacjonarna: Weryfikacja wieku OK [ID: %d, wiek: %d]", klient->id, klient->wiek);
-                    ZapiszLog(LOG_INFO, buf);
-                }
-            }
-            
-            if (moze_kupic) {
-                sprintf(buf, "Klient [ID: %d] zostal obsluzony przy kasie stacjonarnej. Suma: %.2f PLN",
-                        klient->id, ObliczSumeKoszyka(klient));
-                ZapiszLog(LOG_INFO, buf);
-            }
-        } else {
-            sprintf(buf, "Klient [ID: %d]: Kolejka stacjonarna pelna!", klient->id);
+        //Sprawdz czy jakakolwiek kasa jest dostepna
+        if (wybrana_kasa == -1) {
+            sprintf(buf, "Klient [ID: %d]: Brak dostepnych kas stacjonarnych!", klient->id);
             ZapiszLog(LOG_OSTRZEZENIE, buf);
             moze_kupic = 0;
-            kod_bledu = 2;  //Kolejka pelna
+            kod_bledu = 2;  //Kolejka pelna / brak kas
+        } else {
+            //Dolacz do wybranej kolejki
+            klient->stan = (wybrana_kasa == 0) ? STAN_KOLEJKA_KASA_1 : STAN_KOLEJKA_KASA_2;
+            klient->czas_dolaczenia_do_kolejki = time(NULL);
+            
+            if (DodajDoKolejkiStacjonarnej(wybrana_kasa, klient->id, stan_sklepu, sem_id) == 0) {
+                sprintf(buf, "Klient [ID: %d] dolaczyl do kolejki kasy stacjonarnej %d.", klient->id, wybrana_kasa + 1);
+                ZapiszLog(LOG_INFO, buf);
+                
+                //Czekaj na obsluge (pomijane w trybie testu 1)
+                SYMULACJA_USLEEP(stan_sklepu, (2 + (rand() % 5)) * 1000000);
+                
+                klient->stan = STAN_PRZY_KASIE;
+                
+                //Weryfikacja alkoholu przy kasie stacjonarnej
+                if (ma_alkohol) {
+                    if (klient->wiek < 18) {
+                        sprintf(buf, "Kasa stacjonarna: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
+                                klient->id, klient->wiek);
+                        ZapiszLog(LOG_BLAD, buf);
+                        moze_kupic = 0;
+                        kod_bledu = 1;  //Niepelnoletni
+                    } else {
+                        sprintf(buf, "Kasa stacjonarna: Weryfikacja wieku OK [ID: %d, wiek: %d]", klient->id, klient->wiek);
+                        ZapiszLog(LOG_INFO, buf);
+                    }
+                }
+                
+                if (moze_kupic) {
+                    sprintf(buf, "Klient [ID: %d] zostal obsluzony przy kasie stacjonarnej. Suma: %.2f PLN",
+                            klient->id, ObliczSumeKoszyka(klient));
+                    ZapiszLog(LOG_INFO, buf);
+                }
+            } else {
+                sprintf(buf, "Klient [ID: %d]: Kolejka stacjonarna pelna!", klient->id);
+                ZapiszLog(LOG_OSTRZEZENIE, buf);
+                moze_kupic = 0;
+                kod_bledu = 2;  //Kolejka pelna
+            }
         }
     }
     

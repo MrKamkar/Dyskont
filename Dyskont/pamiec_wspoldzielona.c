@@ -1,85 +1,72 @@
 #include "pamiec_wspoldzielona.h"
 #include <errno.h>
 
-//Funkcja inicjalizujaca pamiec wspoldzielona
-StanSklepu* InicjalizujPamiecWspoldzielona(const char* sciezka) {
-    //Generowanie klucza dla pamieci wspoldzielonej
-    key_t klucz = ftok(sciezka, 'S');
+//Generowanie klucza dla pamieci wspoldzielonej
+static key_t GenerujKlucz() {
+    key_t klucz = ftok(IPC_SCIEZKA, 'S');
     if (klucz == -1) {
-        perror("Blad generowania klucza");
-        exit(1);
+        perror("Blad generowania klucza pamieci wspoldzielonej");
     }
+    return klucz;
+}
 
-    //Utworzenie segmentu pamieci wspoldzielonej
-    int shm_id = shmget(klucz, sizeof(StanSklepu), IPC_CREAT | 0600);
+//Funkcja pomocnicza: pobranie ID segmentu
+static int PobierzIdSegmentu(int flagi) {
+    key_t klucz = GenerujKlucz();
+    if (klucz == -1) return -1;
+    
+    int shm_id = shmget(klucz, sizeof(StanSklepu), flagi);
     if (shm_id == -1) {
-        perror("Blad utworzenia segmentu pamieci dzielonej");
-        exit(1);
+        perror("Blad shmget");
     }
+    return shm_id;
+}
 
-    //Dolaczenie segmentu do przestrzeni adresowej procesu
+//Dolaczenie do segmentu
+static StanSklepu* DolaczDoSegmentu(int shm_id) {
     StanSklepu* stan = (StanSklepu*)shmat(shm_id, NULL, 0);
     if (stan == (void*)-1) {
         perror("Blad dolaczenia pamieci dzielonej");
-        exit(1);
+        return NULL;
     }
-
-    //Czyszczenie
-    WyczyscStanSklepu(stan);
-
     return stan;
 }
 
-//Funkcja dolaczajaca do istniejacej pamieci wspoldzielonej
-StanSklepu* DolaczPamiecWspoldzielona(const char* sciezka) {
-    //Generowanie tego samego klucza
-    key_t klucz = ftok(sciezka, 'S');
-    if (klucz == -1) {
-        perror("Blad generowania klucza");
-        exit(1);
-    }
+//Inicjalizacja pamieci wspoldzielonej
+StanSklepu* InicjalizujPamiecWspoldzielona() {
+    int shm_id = PobierzIdSegmentu(IPC_CREAT | 0600);
+    if (shm_id == -1) exit(1);
 
-    //Pobranie ID istniejacego segmentu
-    int shm_id = shmget(klucz, sizeof(StanSklepu), 0600);
-    if (shm_id == -1) {
-        perror("Blad uzyskania ID pamieci dzielonej");
-        exit(1);
-    }
+    StanSklepu* stan = DolaczDoSegmentu(shm_id);
+    if (!stan) exit(1);
 
-    //Dolaczenie do przestrzeni adresowej
-    StanSklepu* stan = (StanSklepu*)shmat(shm_id, NULL, 0);
-    if (stan == (void*)-1) {
-        perror("Blad dolaczenia do pamieci dzielonej");
-        exit(1);
-    }
+    WyczyscStanSklepu(stan);
+    return stan;
+}
+
+//Dolaczenie do istniejacej pamieci wspoldzielonej
+StanSklepu* DolaczPamiecWspoldzielona() {
+    int shm_id = PobierzIdSegmentu(0600);
+    if (shm_id == -1) exit(1);
+
+    StanSklepu* stan = DolaczDoSegmentu(shm_id);
+    if (!stan) exit(1);
 
     return stan;
 }
 
 //Odlaczenie od pamieci wspoldzielonej
 void OdlaczPamiecWspoldzielona(StanSklepu* stan) {
-    if (stan == NULL) return;
-
-    if (shmdt(stan) == -1) {
+    if (stan && shmdt(stan) == -1) {
         perror("Blad odlaczenia pamieci dzielonej");
     }
 }
 
-//Usuniecie pamieci wspoldzielonej wywolywane przez glowny proces
-void UsunPamiecWspoldzielona(const char* sciezka) {
-    key_t klucz = ftok(sciezka, 'S');
-    if (klucz == -1) {
-        perror("Blad generowania klucza");
-        return;
-    }
+//Usuniecie pamieci wspoldzielonej
+void UsunPamiecWspoldzielona() {
+    int shm_id = PobierzIdSegmentu(0600);
+    if (shm_id == -1) return;
 
-    int shm_id = shmget(klucz, sizeof(StanSklepu), 0600);
-    if (shm_id == -1) {
-        perror("Blad uzyskania ID pamieci dzielonej");
-        return;
-    }
-
-    //Usuniecie segmentu
     if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
         perror("Blad usuniecia segmentu pamieci");
     }

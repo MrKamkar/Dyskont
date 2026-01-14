@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/select.h>
 
 //Inicjalizacja FIFO, tworzy lacze nazwane
 int InicjalizujFifoObslugi() {
@@ -85,14 +86,14 @@ int main(int argc, char* argv[]) {
     const char* sciezka = argv[1];
     
     //Dolaczenie do pamieci wspoldzielonej
-    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona(sciezka);
+    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
     if (!stan_sklepu) {
         fprintf(stderr, "Pracownik: Nie mozna dolaczyc do pamieci wspoldzielonej\n");
         return 1;
     }
     
     //Dolaczenie do semaforow
-    int sem_id = DolaczSemafory(sciezka);
+    int sem_id = DolaczSemafory();
     if (sem_id == -1) {
         fprintf(stderr, "Pracownik: Nie mozna dolaczyc do semaforow\n");
         OdlaczPamiecWspoldzielona(stan_sklepu);
@@ -114,7 +115,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    //Glowna petla pracownika
+    //Glowna petla pracownika - uzywa select() z timeoutem zamiast usleep
     while (1) {
         //Sprawdzenie flagi ewakuacji
         if (stan_sklepu->flaga_ewakuacji) {
@@ -122,59 +123,67 @@ int main(int argc, char* argv[]) {
             break;
         }
         
-        ZadanieObslugi zadanie;
-        ssize_t przeczytano = read(fd, &zadanie, sizeof(ZadanieObslugi));
+        //Blokujace czekanie na dane z FIFO (max 1 sek)
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(fd, &readfds);
+        struct timeval timeout = {1, 0};  //1 sekunda
         
-        if (przeczytano == sizeof(ZadanieObslugi)) {
-            //Przetworzenie zadania
-            switch (zadanie.typ) {
-                case ZADANIE_ODBLOKUJ_KASE:
-                    sprintf(buf, "Pracownik obslugi: Odblokowuje kase samoobslugowa [%d] dla klienta [%d]",
-                            zadanie.id_kasy + 1, zadanie.id_klienta);
-                    ZapiszLog(LOG_INFO, buf);
-                    
-                    //Symulacja czasu interwencji
-                    usleep(500000); //500ms
-                    
-                    //Odblokowanie kasy w pamieci wspoldzielonej
-                    ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
-                    if (stan_sklepu->kasy_samo[zadanie.id_kasy].stan == KASA_ZABLOKOWANA) {
-                        stan_sklepu->kasy_samo[zadanie.id_kasy].stan = KASA_ZAJETA;
-                    }
-                    ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
-                    
-                    sprintf(buf, "Pracownik obslugi: Kasa samoobslugowa [%d] odblokowana.", zadanie.id_kasy + 1);
-                    ZapiszLog(LOG_INFO, buf);
-                    break;
-                    
-                case ZADANIE_WERYFIKUJ_WIEK:
-                    sprintf(buf, "Pracownik obslugi: Weryfikacja wieku klienta [%d], wiek: %d",
-                            zadanie.id_klienta, zadanie.wiek_klienta);
-                    ZapiszLog(LOG_INFO, buf);
-                    
-                    //Symulacja weryfikacji
-                    usleep(300000); //300ms
-                    
-                    if (zadanie.wiek_klienta >= 18) {
-                        sprintf(buf, "Pracownik obslugi: Wiek OK - klient [%d] moze kupic alkohol.",
-                                zadanie.id_klienta);
+        int gotowe = select(fd + 1, &readfds, NULL, NULL, &timeout);
+        
+        if (gotowe > 0 && FD_ISSET(fd, &readfds)) {
+            ZadanieObslugi zadanie;
+            ssize_t przeczytano = read(fd, &zadanie, sizeof(ZadanieObslugi));
+            
+            if (przeczytano == sizeof(ZadanieObslugi)) {
+                //Przetworzenie zadania
+                switch (zadanie.typ) {
+                    case ZADANIE_ODBLOKUJ_KASE:
+                        sprintf(buf, "Pracownik obslugi: Odblokowuje kase samoobslugowa [%d] dla klienta [%d]",
+                                zadanie.id_kasy + 1, zadanie.id_klienta);
                         ZapiszLog(LOG_INFO, buf);
-                    } else {
-                        sprintf(buf, "Pracownik obslugi: ODMOWA - klient [%d] niepelnoletni!",
-                                zadanie.id_klienta);
-                        ZapiszLog(LOG_BLAD, buf);
-                    }
-                    break;
+                        
+                        //Symulacja czasu interwencji
+                        SYMULACJA_USLEEP(stan_sklepu, 500000); //500ms
+                        
+                        //Odblokowanie kasy w pamieci wspoldzielonej
+                        ZajmijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                        if (stan_sklepu->kasy_samo[zadanie.id_kasy].stan == KASA_ZABLOKOWANA) {
+                            stan_sklepu->kasy_samo[zadanie.id_kasy].stan = KASA_ZAJETA;
+                        }
+                        ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+                        
+                        sprintf(buf, "Pracownik obslugi: Kasa samoobslugowa [%d] odblokowana.", zadanie.id_kasy + 1);
+                        ZapiszLog(LOG_INFO, buf);
+                        break;
+                        
+                    case ZADANIE_WERYFIKUJ_WIEK:
+                        sprintf(buf, "Pracownik obslugi: Weryfikacja wieku klienta [%d], wiek: %d",
+                                zadanie.id_klienta, zadanie.wiek_klienta);
+                        ZapiszLog(LOG_INFO, buf);
+                        
+                        //Symulacja weryfikacji
+                        SYMULACJA_USLEEP(stan_sklepu, 300000); //300ms
+                        
+                        if (zadanie.wiek_klienta >= 18) {
+                            sprintf(buf, "Pracownik obslugi: Wiek OK - klient [%d] moze kupic alkohol.",
+                                    zadanie.id_klienta);
+                            ZapiszLog(LOG_INFO, buf);
+                        } else {
+                            sprintf(buf, "Pracownik obslugi: ODMOWA - klient [%d] niepelnoletni!",
+                                    zadanie.id_klienta);
+                            ZapiszLog(LOG_BLAD, buf);
+                        }
+                        break;
+                }
+            } else if (przeczytano == 0) {
+                //Koniec danych, ponowne otwarcie FIFO
+                close(fd);
+                fd = open(FIFO_OBSLUGA, O_RDONLY | O_NONBLOCK);
+                if (fd == -1) break;
             }
-        } else if (przeczytano == 0) {
-            //Koniec danych, ponowne otwarcie FIFO
-            close(fd);
-            fd = open(FIFO_OBSLUGA, O_RDONLY | O_NONBLOCK);
-            if (fd == -1) break;
         }
-        //Jesli przeczytano == -1 i errno == EAGAIN to brak danych
-        
-        usleep(100000); //100ms
+        //Jesli timeout (gotowe == 0) - kontynuuj petle, sprawdzi ewakuacje
     }
     
     close(fd);

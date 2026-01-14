@@ -37,7 +37,7 @@ struct KomunikatLog {
 };
 
 //Funkcje zarzadzajace
-void InicjalizujSystemLogowania(const char* sciezka);
+void InicjalizujSystemLogowania();
 void UruchomWatekLogujacy();  //Zmienione z procesu na watek
 void ZamknijSystemLogowania();
 

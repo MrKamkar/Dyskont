@@ -1,53 +1,59 @@
 #include "semafory.h"
+#include "pamiec_wspoldzielona.h"
 #include <errno.h>
 
-//Inicjalizacja zestawu semaforow
-int InicjalizujSemafory(const char* sciezka) {
-    //Generowanie klucza dla semaforow (uzywamy 'M' dla semaforow)
-    key_t klucz = ftok(sciezka, 'M');
+//Generowanie klucza dla semaforow
+static key_t GenerujKlucz() {
+    key_t klucz = ftok(IPC_SCIEZKA, 'M');
     if (klucz == -1) {
         perror("Blad generowania klucza dla semaforow");
+    }
+    return klucz;
+}
+
+//Wykonanie operacji na semaforze
+static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
+    struct sembuf operacja = { sem_num, wartosc, SEM_UNDO };
+    
+    if (semop(sem_id, &operacja, 1) == -1) {
+        if (errno != EINVAL && errno != EIDRM) {
+            perror(blad_msg);
+        }
         return -1;
     }
+    return 0;
+}
 
-    //Utworzenie zestawu semaforow (SEM_LICZBA semaforow)
+//Inicjalizacja zestawu semaforow
+int InicjalizujSemafory() {
+    key_t klucz = GenerujKlucz();
+    if (klucz == -1) return -1;
+
     int sem_id = semget(klucz, SEM_LICZBA, IPC_CREAT | IPC_EXCL | 0600);
     if (sem_id == -1) {
         perror("Blad utworzenia zestawu semaforow");
         return -1;
     }
 
-    //Inicjalizacja wartosci semaforow
+    //Inicjalizacja semaforow
     union semun arg;
+    unsigned short wartosci[SEM_LICZBA];
     
-    //Semafor pamieci wspoldzielonej (mutex binarny, wartosc poczatkowa = 1)
-    arg.val = 1;
-    if (semctl(sem_id, SEM_PAMIEC_WSPOLDZIELONA, SETVAL, arg) == -1) {
-        perror("Blad inicjalizacji semafora pamieci wspoldzielonej");
-        semctl(sem_id, 0, IPC_RMID); //Czyszczenie w przypadku błędu
-        return -1;
-    }
-
-    //Semafor kolejki samoobslugowej (mutex binarny, wartosc poczatkowa = 1)
-    arg.val = 1;
-    if (semctl(sem_id, SEM_KOLEJKA_SAMO, SETVAL, arg) == -1) {
-        perror("Blad inicjalizacji semafora kolejki");
-        semctl(sem_id, 0, IPC_RMID); //Czyszczenie w przypadku błędu
-        return -1;
-    }
-
-    //Semafor kasy stacjonarnej 1 (mutex binarny, wartosc poczatkowa = 1)
-    arg.val = 1;
-    if (semctl(sem_id, SEM_KASA_STACJONARNA_1, SETVAL, arg) == -1) {
-        perror("Blad inicjalizacji semafora kasy stacjonarnej 1");
-        semctl(sem_id, 0, IPC_RMID);
-        return -1;
-    }
-
-    //Semafor kasy stacjonarnej 2 (mutex binarny, wartosc poczatkowa = 1)
-    arg.val = 1;
-    if (semctl(sem_id, SEM_KASA_STACJONARNA_2, SETVAL, arg) == -1) {
-        perror("Blad inicjalizacji semafora kasy stacjonarnej 2");
+    //Mutexy binarne (wartość 1)
+    wartosci[SEM_PAMIEC_WSPOLDZIELONA] = 1;
+    wartosci[SEM_KOLEJKA_SAMO] = 1;
+    wartosci[SEM_KASA_STACJONARNA_1] = 1;
+    wartosci[SEM_KASA_STACJONARNA_2] = 1;
+    
+    //Semafory zliczajace
+    wartosci[SEM_WOLNE_KASY_SAMO] = 3;     //3 kasy otwarte na start (MIN_KAS_SAMO_CZYNNYCH)
+    wartosci[SEM_KLIENCI_KOLEJKA_1] = 0;   //Brak klientow na start
+    wartosci[SEM_KLIENCI_KOLEJKA_2] = 0;   //Brak klientow na start
+    
+    arg.array = wartosci;
+    
+    if (semctl(sem_id, 0, SETALL, arg) == -1) {
+        perror("Blad inicjalizacji semaforow");
         semctl(sem_id, 0, IPC_RMID);
         return -1;
     }
@@ -56,15 +62,10 @@ int InicjalizujSemafory(const char* sciezka) {
 }
 
 //Dolaczenie do istniejacych semaforow
-int DolaczSemafory(const char* sciezka) {
-    //Generowanie tego samego klucza
-    key_t klucz = ftok(sciezka, 'M');
-    if (klucz == -1) {
-        perror("Blad generowania klucza dla semaforow");
-        return -1;
-    }
+int DolaczSemafory() {
+    key_t klucz = GenerujKlucz();
+    if (klucz == -1) return -1;
 
-    //Pobranie ID istniejacego zestawu
     int sem_id = semget(klucz, SEM_LICZBA, 0600);
     if (sem_id == -1) {
         perror("Blad uzyskania ID zestawu semaforow");
@@ -76,38 +77,12 @@ int DolaczSemafory(const char* sciezka) {
 
 //Zajmuje semafor (zmniejsza o 1)
 int ZajmijSemafor(int sem_id, int sem_num) {
-    struct sembuf operacja;
-    operacja.sem_num = sem_num;    //Numer semafora
-    operacja.sem_op = -1;          //Zmniejsz wartość o 1
-    operacja.sem_flg = 0;          //Blokujace oczekiwanie
-
-    if (semop(sem_id, &operacja, 1) == -1) {
-        //Nie wyswietli bledu gdy semafor zostal usuniety
-        if (errno != EINVAL && errno != EIDRM) {
-            perror("Blad zajmowania semafora");
-        }
-        return -1;
-    }
-
-    return 0;
+    return OperacjaSemafor(sem_id, sem_num, -1, "Blad zajmowania semafora");
 }
 
 //Zwalnia semafor (zwieksza o 1)
 int ZwolnijSemafor(int sem_id, int sem_num) {
-    struct sembuf operacja;
-    operacja.sem_num = sem_num;    //Numer semafora
-    operacja.sem_op = 1;           //Zwieksz wartosc o 1
-    operacja.sem_flg = 0;          //Bez flag
-
-    if (semop(sem_id, &operacja, 1) == -1) {
-        //Nie wyswietli bledu gdy semafor zostal usuniety
-        if (errno != EINVAL && errno != EIDRM) {
-            perror("Blad zwalniania semafora");
-        }
-        return -1;
-    }
-
-    return 0;
+    return OperacjaSemafor(sem_id, sem_num, 1, "Blad zwalniania semafora");
 }
 
 //Usuniecie zestawu semaforow
@@ -116,6 +91,5 @@ int UsunSemafory(int sem_id) {
         perror("Blad usuniecia zestawu semaforow");
         return -1;
     }
-
     return 0;
 }

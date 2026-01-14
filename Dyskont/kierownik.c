@@ -137,7 +137,7 @@ int main(int argc, char* argv[]) {
     const char* sciezka = argv[1];
     
     //Dolaczenie do pamieci wspoldzielonej
-    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona(sciezka);
+    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
     if (!stan_sklepu) {
         fprintf(stderr, "Kierownik: Nie mozna dolaczyc do pamieci wspoldzielonej\n");
         fprintf(stderr, "Upewnij sie, ze symulacja (dyskont.out) jest uruchomiona.\n");
@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
     }
     
     //Dolaczenie do semaforow
-    int sem_id = DolaczSemafory(sciezka);
+    int sem_id = DolaczSemafory();
     if (sem_id == -1) {
         fprintf(stderr, "Kierownik: Nie mozna dolaczyc do semaforow\n");
         OdlaczPamiecWspoldzielona(stan_sklepu);

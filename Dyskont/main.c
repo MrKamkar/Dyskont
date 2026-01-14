@@ -17,6 +17,7 @@ static char g_sciezka[256];
 
 //Otwieranie kasy stacjonarnej 2
 void ObslugaSIGUSR1(int sig) {
+    (void)sig;
     if (!g_stan_sklepu) return;
     
     ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
@@ -33,6 +34,7 @@ void ObslugaSIGUSR1(int sig) {
 
 //Zamykanie kasy stacjonarnej
 void ObslugaSIGUSR2(int sig) {
+    (void)sig;
     if (!g_stan_sklepu) return;
     
     ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
@@ -51,6 +53,7 @@ void ObslugaSIGUSR2(int sig) {
 
 //Ewakuacja sklepu
 void ObslugaSIGTERM(int sig) {
+    (void)sig;
     if (!g_stan_sklepu) return;
     
     ZajmijSemafor(g_sem_id, SEM_PAMIEC_WSPOLDZIELONA);
@@ -63,6 +66,7 @@ void ObslugaSIGTERM(int sig) {
 
 //Handler sygnalu SIGINT, czyszczenie zasobow
 void ObslugaSIGINT(int sig) {
+    (void)sig;
     ZapiszLog(LOG_INFO, "Otrzymano SIGINT - rozpoczynam zamykanie systemu..");
     
     //Zamkniecie systemu logowania
@@ -72,7 +76,7 @@ void ObslugaSIGINT(int sig) {
     if (g_stan_sklepu) {
         OdlaczPamiecWspoldzielona(g_stan_sklepu);
     }
-    UsunPamiecWspoldzielona(g_sciezka);
+    UsunPamiecWspoldzielona();
     
     //Usuniecie semaforow
     if (g_sem_id != -1) {
@@ -86,9 +90,9 @@ void ObslugaSIGINT(int sig) {
 int main(int argc, char* argv[]) {
     srand(time(NULL));
     
-    //Pobranie czasu symulacji
+    //Pobranie czasu symulacji i opcjonalnego trybu testu
     if (argc < 2) {
-        fprintf(stderr, "Uzycie: %s <czas_symulacji_sekund>\n", argv[0]);
+        fprintf(stderr, "Uzycie: %s <czas_symulacji_sekund> <nr_testu>\n", argv[0]);
         return 1;
     }
     
@@ -96,6 +100,16 @@ int main(int argc, char* argv[]) {
     if (czas_symulacji_arg < 0) {
         fprintf(stderr, "Blad: Czas symulacji musi byc liczba wieksza od 0\n");
         return 1;
+    }
+    
+    //Opcjonalny tryb testu (domyslnie 0)
+    int tryb_testu = 0;
+    if (argc >= 3) {
+        tryb_testu = atoi(argv[2]);
+        if (tryb_testu < 0 || tryb_testu > 1) {
+            fprintf(stderr, "Blad: Nieprawidlowy tryb testu (dozwolone: 0, 1)\n");
+            return 1;
+        }
     }
     
     //Zapis sciezki dla handlera sygnalu
@@ -110,22 +124,26 @@ int main(int argc, char* argv[]) {
     //Inicjalizacja systemu logowania
     printf("=== Symulacja Dyskontu ===\n");
     printf("Czas symulacji: %d sekund\n", czas_symulacji_arg);
+    if (tryb_testu == 1) {
+        printf("TRYB TESTU: Bez sleepow symulacyjnych\n");
+    }
     printf("PID glownego procesu: %d (do wysylania sygnalow)\n", getpid());
     InicjalizujSystemLogowania(argv[0]);
     UruchomWatekLogujacy();
     
     //Inicjalizacja pamieci wspoldzielonej
     ZapiszLog(LOG_INFO, "Inicjalizacja pamieci wspoldzielonej..");
-    g_stan_sklepu = InicjalizujPamiecWspoldzielona(argv[0]);
+    g_stan_sklepu = InicjalizujPamiecWspoldzielona();
     
-    //Zapisz PID glownego procesu do pamieci wspoldzielonej
+    //Zapisz PID glownego procesu i tryb testu do pamieci wspoldzielonej
     g_stan_sklepu->pid_glowny = getpid();
+    g_stan_sklepu->tryb_testu = tryb_testu;
     
     ZapiszLog(LOG_INFO, "Pamiec wspoldzielona zainicjalizowana pomyslnie.");
     
     //Inicjalizacja semaforow
     ZapiszLog(LOG_INFO, "Inicjalizacja semaforow..");
-    g_sem_id = InicjalizujSemafory(argv[0]);
+    g_sem_id = InicjalizujSemafory();
     if (g_sem_id == -1) {
         ZapiszLog(LOG_BLAD, "Nie udalo sie zainicjalizowac semaforow!");
         ObslugaSIGINT(0);
@@ -365,7 +383,7 @@ int main(int argc, char* argv[]) {
     ZapiszLog(LOG_INFO, "Zwalnianie zasobow IPC..");
     UsunFifoObslugi();
     OdlaczPamiecWspoldzielona(g_stan_sklepu);
-    UsunPamiecWspoldzielona(argv[0]);
+    UsunPamiecWspoldzielona();
     UsunSemafory(g_sem_id);
     
     ZamknijSystemLogowania();

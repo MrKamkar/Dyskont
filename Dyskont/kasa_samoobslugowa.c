@@ -89,6 +89,9 @@ void ZwolnijKase(int id_kasy, StanSklepu* stan, int sem_id) {
     stan->kasy_samo[id_kasy].id_klienta = -1;
     stan->kasy_samo[id_kasy].czas_rozpoczecia = 0;
     ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
+    
+    //Sygnal dla czekajacych klientow - jest wolna kasa
+    ZwolnijSemafor(sem_id, SEM_WOLNE_KASY_SAMO);
 }
 
 //Oblicza wymagana liczbe kas: K klientow = 1 kasa, min 3
@@ -142,7 +145,7 @@ void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
     ZwolnijSemafor(sem_id, SEM_PAMIEC_WSPOLDZIELONA);
 }
 
-//Obsluga klienta przy kasie samoobslugowej (zwraca 0=sukces, -1=timeout, -2=niepelnoletni)
+//Obsluga klienta przy kasie samoobslugowej
 int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow, 
                                  double suma, int ma_alkohol, int wiek, StanSklepu* stan, int sem_id) {
     char buf[256];
@@ -153,7 +156,8 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
     
     //Skanowanie produktow
     for (int i = 0; i < liczba_produktow; i++) {
-        usleep(CZAS_SKANOWANIA_PRODUKTU_MS * 1000);
+        //Symulacja skanowania (pomijana w trybie testu 1)
+        SYMULACJA_USLEEP(stan, CZAS_SKANOWANIA_PRODUKTU_MS * 1000);
         
         //Losowa blokada kasy
         if (rand() % SZANSA_BLOKADY == 0) {
@@ -222,7 +226,7 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
         WyslijZadanieObslugi(&zadanie);
         
         //Krotkie oczekiwanie na weryfikacje
-        usleep(500000); //500ms
+        SYMULACJA_USLEEP(stan, 500000); //500ms
         
         if (wiek < 18) {
             sprintf(buf, "Kasa samoobslugowa [%d]: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
@@ -261,14 +265,14 @@ int main(int argc, char* argv[]) {
     }
     
     //Dolaczenie do pamieci wspoldzielonej
-    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona(sciezka);
+    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
     if (!stan_sklepu) {
         fprintf(stderr, "Kasa samoobslugowa [%d]: Nie mozna dolaczyc do pamieci wspoldzielonej\n", id_kasy + 1);
         return 1;
     }
     
     //Dolaczenie do semaforow
-    int sem_id = DolaczSemafory(sciezka);
+    int sem_id = DolaczSemafory();
     if (sem_id == -1) {
         fprintf(stderr, "Kasa samoobslugowa [%d]: Nie mozna dolaczyc do semaforow\n", id_kasy + 1);
         OdlaczPamiecWspoldzielona(stan_sklepu);

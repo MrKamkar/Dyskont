@@ -1,4 +1,5 @@
 #include "logi.h"
+#include "pamiec_wspoldzielona.h"
 #include <sys/stat.h>
 #include <fcntl.h>
 
@@ -8,6 +9,7 @@ static int watek_uruchomiony = 0;
 
 //Petla watku logujacego
 static void* PetlaLoggera(void* arg) {
+    (void)arg;
     
     mkdir("logs", 0300);
     
@@ -91,9 +93,9 @@ static void* PetlaLoggera(void* arg) {
     pthread_exit(NULL);
 }
 
-void InicjalizujSystemLogowania(const char* sciezka) {
+void InicjalizujSystemLogowania() {
     
-    key_t klucz = ftok(sciezka, 65); //'A' = 65
+    key_t klucz = ftok(IPC_SCIEZKA, 65); //'A' = 65
     if (klucz == -1) {
         perror("Blad generowania klucza");
         exit(1);

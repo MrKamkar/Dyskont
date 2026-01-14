@@ -9,7 +9,7 @@
 //Czas skanowania jednego produktu (wolniejszy niz kasjer)
 #define CZAS_SKANOWANIA_PRODUKTU_MS 300
 
-//Szansa na losowa blokade kasy (1 na X produktow, czyli 10% szans)
+//Szansa na losowa blokade kasy - 1 na X produktow
 #define SZANSA_BLOKADY 10
 
 //Czas oczekiwania na odblokowaanie kasy (w sekundach)
