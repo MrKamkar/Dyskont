@@ -1,6 +1,22 @@
 #include "pamiec_wspoldzielona.h"
 #include <errno.h>
 
+//Zwraca nazwe kategorii produktu
+const char* NazwaKategorii(KategoriaProduktu kat) {
+    switch (kat) {
+        case KAT_OWOCE:    return "Owoce";
+        case KAT_WARZYWA:  return "Warzywa";
+        case KAT_PIECZYWO: return "Pieczywo";
+        case KAT_NABIAL:   return "Nabial";
+        case KAT_ALKOHOL:  return "Alkohol";
+        case KAT_WEDLINY:  return "Wedliny";
+        case KAT_NAPOJE:   return "Napoje";
+        case KAT_SLODYCZE: return "Slodycze";
+        case KAT_INNE:     return "Inne";
+        default:           return "Nieznana";
+    }
+}
+
 //Generowanie klucza dla pamieci wspoldzielonej
 static key_t GenerujKlucz() {
     key_t klucz = ftok(IPC_SCIEZKA, 'S');

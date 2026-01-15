@@ -22,6 +22,9 @@ typedef enum {
     KAT_INNE
 } KategoriaProduktu;
 
+//Zwraca nazwe kategorii produktu jako string
+const char* NazwaKategorii(KategoriaProduktu kat);
+
 //Struktura produktu
 typedef struct {
     char nazwa[50];

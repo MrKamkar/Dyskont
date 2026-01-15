@@ -43,4 +43,7 @@ void ZrobZakupy(Klient* k, const StanSklepu* stan_sklepu);
 int CzyZawieraAlkohol(const Klient* k);
 double ObliczSumeKoszyka(const Klient* k);
 
+//Wydruk paragonu z lista produktow
+void WydrukujParagon(const Klient* k, const char* typ_kasy, int id_kasy);
+
 #endif

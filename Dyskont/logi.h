@@ -10,6 +10,7 @@
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <pthread.h>
+#include <stdarg.h>
 
 //Typy komunikatow logowania
 typedef enum {
@@ -41,7 +42,8 @@ void InicjalizujSystemLogowania();
 void UruchomWatekLogujacy();  //Zmienione z procesu na watek
 void ZamknijSystemLogowania();
 
-//Funkcja dla klienta
-void ZapiszLog(TypLogu typ_logu, const char* format);
+//Funkcje logowania
+void ZapiszLog(TypLogu typ_logu, const char* tresc);
+void ZapiszLogF(TypLogu typ_logu, const char* format, ...);
 
 #endif

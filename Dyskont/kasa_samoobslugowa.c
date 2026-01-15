@@ -1,17 +1,8 @@
 #include "kasa_samoobslugowa.h"
 #include "pracownik_obslugi.h"
-#include "semafory.h"
-#include "logi.h"
+#include "wspolne.h"
 #include <string.h>
 #include <signal.h>
-
-//Flaga sygnalu wyjscia (SIGTERM)
-static volatile sig_atomic_t g_sygnal_wyjscia = 0;
-
-void ObslugaSygnaluWyjsciaKasaSamo(int sig) {
-    (void)sig;
-    g_sygnal_wyjscia = 1;
-}
 
 //Pusty handler SIGALRM
 void ObslugaSigAlarmKasaSamo(int sig) {
@@ -41,18 +32,8 @@ int UsunKlientaZKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_
     
     ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
     
-    int znaleziono = 0;
-    for (int i = 0; i < stan->liczba_w_kolejce_samo; i++) {
-        if (stan->kolejka_samo[i] == id_klienta) {
-            //Przesuniecie reszty kolejki
-            for (int j = i; j < stan->liczba_w_kolejce_samo - 1; j++) {
-                stan->kolejka_samo[j] = stan->kolejka_samo[j + 1];
-            }
-            stan->liczba_w_kolejce_samo--;
-            znaleziono = 1;
-            break;
-        }
-    }
+    //Szukaj klienta i usun z kolejki
+    int znaleziono = UsunZKolejki(stan->kolejka_samo, &stan->liczba_w_kolejce_samo, id_klienta);
     
     ZwolnijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
     return znaleziono ? 0 : -1;
@@ -126,7 +107,7 @@ void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
     int wymagane = ObliczWymaganaLiczbeKas(liczba_klientow);
     int aktualne = stan->liczba_czynnych_kas_samo;
     
-    char buf[256];
+    char buf_log[256];
     
     //Otworz wiecej kas jesli potrzeba
     if (wymagane > aktualne) {
@@ -135,9 +116,9 @@ void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
                 stan->kasy_samo[i].stan = KASA_WOLNA;
                 stan->kasy_samo[i].id_klienta = -1;
                 aktualne++;
-                sprintf(buf, "Kasa samoobslugowa [%d]: Otwarta (wymagane: %d kas dla %d klientow)", 
+                sprintf(buf_log, "Kasa samoobslugowa [%d]: Otwarta (wymagane: %d kas dla %d klientow)", 
                         i + 1, wymagane, liczba_klientow);
-                ZapiszLog(LOG_INFO, buf);
+                ZapiszLog(LOG_INFO, buf_log);
             }
         }
         stan->liczba_czynnych_kas_samo = aktualne;
@@ -148,9 +129,9 @@ void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
             if (stan->kasy_samo[i].stan == KASA_WOLNA) {
                 stan->kasy_samo[i].stan = KASA_ZAMKNIETA;
                 aktualne--;
-                sprintf(buf, "Kasa samoobslugowa [%d]: Zamknieta (wymagane: %d kas dla %d klientow)", 
+                sprintf(buf_log, "Kasa samoobslugowa [%d]: Zamknieta (wymagane: %d kas dla %d klientow)", 
                         i + 1, wymagane, liczba_klientow);
-                ZapiszLog(LOG_INFO, buf);
+                ZapiszLog(LOG_INFO, buf_log);
             }
         }
         stan->liczba_czynnych_kas_samo = aktualne;
@@ -162,11 +143,8 @@ void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
 //Obsluga klienta przy kasie samoobslugowej
 int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow, 
                                  double suma, int ma_alkohol, int wiek, StanSklepu* stan, int sem_id) {
-    char buf[256];
-    
-    sprintf(buf, "Kasa samoobslugowa [%d]: Klient [ID: %d] rozpoczyna skanowanie %d produktow",
+    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Klient [ID: %d] rozpoczyna skanowanie %d produktow",
             id_kasy + 1, id_klienta, liczba_produktow);
-    ZapiszLog(LOG_INFO, buf);
     
     //Skanowanie produktow
     for (int i = 0; i < liczba_produktow; i++) {
@@ -175,9 +153,8 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
         
         //Losowa blokada kasy
         if (rand() % SZANSA_BLOKADY == 0) {
-            sprintf(buf, "Kasa samoobslugowa [%d]: BLOKADA! Niezgodnosc wagi produktu.",
+            ZapiszLogF(LOG_OSTRZEZENIE, "Kasa samoobslugowa [%d]: BLOKADA! Niezgodnosc wagi produktu.",
                     id_kasy + 1);
-            ZapiszLog(LOG_OSTRZEZENIE, buf);
             
             ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             stan->kasy_samo[id_kasy].stan = KASA_ZABLOKOWANA;
@@ -203,11 +180,7 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
                     return -3;  //Ewakuacja
                 }
                 
-                //Blokujace czekanie na sygnal odblokowania (max 1 sek)
-                struct timespec timeout = {1, 0};
-                struct sembuf op = {SEM_ODBLOKUJ_KASA_SAMO(id_kasy), -1, 0};
-                
-                if (semtimedop(sem_id, &op, 1, &timeout) == 0) {
+                if (CzekajNaSemafor(sem_id, SEM_ODBLOKUJ_KASA_SAMO(id_kasy), 1) == 0) {
                     //Otrzymano sygnal odblokowania
                     break;
                 }
@@ -216,9 +189,8 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
             }
             
             if (pozostaly_czas <= 0) {
-                sprintf(buf, "Kasa samoobslugowa [%d]: Timeout! Pracownik nie podszedl w ciagu %d sek.",
+                ZapiszLogF(LOG_BLAD, "Kasa samoobslugowa [%d]: Timeout! Pracownik nie podszedl w ciagu %d sek.",
                         id_kasy + 1, MAX_CZAS_OCZEKIWANIA);
-                ZapiszLog(LOG_BLAD, buf);
                 timeout_blokady = 1;
             }
             
@@ -228,16 +200,14 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
                 return -1;  //Timeout - klient powinien isc do kasy stacjonarnej
             }
             
-            sprintf(buf, "Kasa samoobslugowa [%d]: Odblokowana przez pracownika obslugi.", id_kasy + 1);
-            ZapiszLog(LOG_INFO, buf);
+            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Odblokowana przez pracownika obslugi.", id_kasy + 1);
         }
     }
     
     //Weryfikacja wieku przy alkoholu
     if (ma_alkohol) {
-        sprintf(buf, "Kasa samoobslugowa [%d]: Alkohol wykryty! Wzywam pracownika...",
+        ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Alkohol wykryty! Wzywam pracownika...",
                 id_kasy + 1);
-        ZapiszLog(LOG_INFO, buf);
         
         //Wyslanie zadania weryfikacji wieku przez FIFO
         ZadanieObslugi zadanie;
@@ -251,22 +221,18 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
         SYMULACJA_USLEEP(stan, 500000); //500ms
         
         if (wiek < 18) {
-            sprintf(buf, "Kasa samoobslugowa [%d]: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
+            ZapiszLogF(LOG_BLAD, "Kasa samoobslugowa [%d]: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
                     id_kasy + 1, id_klienta, wiek);
-            ZapiszLog(LOG_BLAD, buf);
-            return -2;  //Niepelnoletni
+            return -2;
         } else {
-            sprintf(buf, "Kasa samoobslugowa [%d]: Weryfikacja wieku OK (wiek: %d)", id_kasy + 1, wiek);
-            ZapiszLog(LOG_INFO, buf);
+            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Weryfikacja wieku OK (wiek: %d)", id_kasy + 1, wiek);
         }
     }
     
-    //Platnosc karta i wydruk paragonu
-    sprintf(buf, "Kasa samoobslugowa [%d]: Klient [ID: %d] zaplacil karta. Suma: %.2f PLN. Paragon wydrukowany.",
+    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Klient [ID: %d] zaplacil karta. Suma: %.2f PLN. Paragon wydrukowany.",
             id_kasy + 1, id_klienta, suma);
-    ZapiszLog(LOG_INFO, buf);
     
-    return 0;  //Sukces
+    return 0;
 }
 
 //Glowna funkcja procesu kasy samoobslugowej
@@ -285,41 +251,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    //Dolaczenie do pamieci wspoldzielonej
-    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
-    if (!stan_sklepu) {
-        fprintf(stderr, "Kasa samoobslugowa [%d]: Nie mozna dolaczyc do pamieci wspoldzielonej\n", id_kasy + 1);
+    StanSklepu* stan_sklepu;
+    int sem_id;
+    
+    if (InicjalizujProcesPochodny(&stan_sklepu, &sem_id, "Kasa samoobslugowa") == -1) {
         return 1;
     }
     
-    //Dolaczenie do semaforow
-    int sem_id = DolaczSemafory();
-    if (sem_id == -1) {
-        fprintf(stderr, "Kasa samoobslugowa [%d]: Nie mozna dolaczyc do semaforow\n", id_kasy + 1);
-        OdlaczPamiecWspoldzielona(stan_sklepu);
-        return 1;
-    }
-    
-    //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
-    InicjalizujSystemLogowania();
-    
-    //Rejestracja handlera SIGTERM
-    signal(SIGTERM, ObslugaSygnaluWyjsciaKasaSamo);
-    //SIGALRM - pusty handler, zeby pause() sie obudzil
+    signal(SIGTERM, ObslugaSygnaluWyjscia);
     signal(SIGALRM, ObslugaSigAlarmKasaSamo);
     
     srand(time(NULL) ^ getpid());
     
-    char buf[256];
-    sprintf(buf, "Kasa samoobslugowa [%d]: Proces uruchomiony.", id_kasy + 1);
-    ZapiszLog(LOG_INFO, buf);
+    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Proces uruchomiony.", id_kasy + 1);
     
     //Glowna petla - proces monitorujacy, uzywa semtimedop z timeoutem
     while (1) {
-        //Sprawdzenie flagi ewakuacji lub sygnalu wyjscia
-        if (stan_sklepu->flaga_ewakuacji || g_sygnal_wyjscia) {
-            sprintf(buf, "Kasa samoobslugowa [%d]: Ewakuacja - koncze prace.", id_kasy + 1);
-            ZapiszLog(LOG_INFO, buf);
+        if (CZY_KONCZYC(stan_sklepu)) {
+            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Ewakuacja - koncze prace.", id_kasy + 1);
             break;
         }
         

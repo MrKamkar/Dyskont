@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdarg.h>
 
 static int id_kolejki = -1;
 static pthread_t watek_loggera;
@@ -156,3 +157,17 @@ void ZapiszLog(TypLogu typ_logu, const char* format) {
     //Bledy ignorowane - kolejka moze byc usunieta podczas zamykania
 }
 
+void ZapiszLogF(TypLogu typ_logu, const char* format, ...) {
+    if (id_kolejki == -1) return;
+
+    struct KomunikatLog msg;
+    msg.typ_komunikatu = 1;
+    msg.typ_logu = typ_logu;
+    
+    va_list args;
+    va_start(args, format);
+    vsnprintf(msg.tresc, sizeof(msg.tresc), format, args);
+    va_end(args);
+
+    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), IPC_NOWAIT);
+}

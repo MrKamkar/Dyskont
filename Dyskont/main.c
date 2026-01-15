@@ -9,6 +9,7 @@
 #include "pamiec_wspoldzielona.h"
 #include "semafory.h"
 #include "pracownik_obslugi.h"
+#include "kasjer.h"
 
 //Globalne zmienne dla czyszczenia zasobow
 static StanSklepu* g_stan_sklepu = NULL;
@@ -53,6 +54,9 @@ void ObslugaSIGUSR1(int sig) {
         ZwolnijSemafor(g_sem_id, SEM_OTWORZ_KASA_STACJ_2);
         
         ZapiszLog(LOG_INFO, "Kierownik: Sygnal SIGUSR1 - otwarto kase stacjonarna 2.");
+        
+        //Migracja klientow z kasy 1 do kasy 2
+        MigrujKlientowDoKasy2(g_stan_sklepu, g_sem_id);
     } else {
         ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: Kasa 2 jest juz otwarta.");
@@ -321,7 +325,8 @@ int main(int argc, char* argv[]) {
                 char id_str[16];
                 sprintf(id_str, "%d", id_klienta + 1);
                 
-                execl("./klient", "klient", id_str, (char*)NULL);
+                //Drugi argument "0" to stworzony przez dyskont
+                execl("./klient", "klient", id_str, "0", (char*)NULL);
                 
                 perror("Blad exec()");
                 exit(1);
@@ -354,7 +359,7 @@ int main(int argc, char* argv[]) {
     
     //Oczekiwanie na zakonczenie pozostalych procesow klienckich (z timeoutem)
     time_t czas_oczekiwania_start = time(NULL);
-    int timeout_klientow = 10;  //Max 10 sekund na zakonczenie klientow
+    int timeout_klientow = 10;  //Maksymalna ilosc sekund na zakonczenie klientow
     
     while (g_aktywnych_klientow > 0 && (time(NULL) - czas_oczekiwania_start) < timeout_klientow) {
         alarm(1);  //Przerwij pause() po 1 sek
@@ -387,7 +392,7 @@ int main(int argc, char* argv[]) {
     
     int status;
     
-    //Oczekiwanie na zakonczenie procesow kasjerow - blokujace waitpid
+    //Oczekiwanie na zakonczenie procesow kasjerow
     //Po wyslaniu SIGTERM procesy powinny zakonczyc sie szybko
     for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
         waitpid(pid_kasjerow[i], &status, 0);

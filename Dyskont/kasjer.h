@@ -36,4 +36,7 @@ int UsunZKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, int 
 void ObsluzKlienta(Kasjer* kasjer, int id_klienta, int liczba_produktow, double suma, int tryb_testu);
 int CzyOtworzycKase1(StanSklepu* stan);
 
+//Migracja klientow z kasy 1 do kasy 2 (przy otwarciu kasy 2)
+int MigrujKlientowDoKasy2(StanSklepu* stan, int sem_id);
+
 #endif

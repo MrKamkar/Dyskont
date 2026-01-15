@@ -1,6 +1,5 @@
 #include "kierownik.h"
-#include "semafory.h"
-#include "logi.h"
+#include "wspolne.h"
 #include <string.h>
 #include <unistd.h>
 
@@ -130,27 +129,14 @@ void PokazStatusKas(StanSklepu* stan, int sem_id) {
 //Glowna funkcja procesu kierownika
 #ifdef KIEROWNIK_STANDALONE
 int main() {
+    StanSklepu* stan_sklepu;
+    int sem_id;
     
-    //Dolaczenie do pamieci wspoldzielonej
-    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
-    if (!stan_sklepu) {
-        fprintf(stderr, "Kierownik: Nie mozna dolaczyc do pamieci wspoldzielonej\n");
+    if (InicjalizujProcesPochodny(&stan_sklepu, &sem_id, "Kierownik") == -1) {
         fprintf(stderr, "Upewnij sie, ze symulacja (dyskont.out) jest uruchomiona.\n");
         return 1;
     }
     
-    //Dolaczenie do semaforow
-    int sem_id = DolaczSemafory();
-    if (sem_id == -1) {
-        fprintf(stderr, "Kierownik: Nie mozna dolaczyc do semaforow\n");
-        OdlaczPamiecWspoldzielona(stan_sklepu);
-        return 1;
-    }
-    
-    //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
-    InicjalizujSystemLogowania();
-    
-    //Pobierz PID glownego procesu z pamieci wspoldzielonej
     pid_t pid_glowny = stan_sklepu->pid_glowny;
     if (pid_glowny <= 0) {
         fprintf(stderr, "Kierownik: Blad - nie znaleziono PID glownego procesu\n");

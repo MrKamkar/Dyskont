@@ -1,16 +1,7 @@
 #include "kasjer.h"
-#include "semafory.h"
-#include "logi.h"
+#include "wspolne.h"
 #include <string.h>
 #include <signal.h>
-
-//Flaga sygnalu wyjscia (SIGTERM)
-static volatile sig_atomic_t g_sygnal_wyjscia = 0;
-
-void ObslugaSygnaluWyjsciaKasjer(int sig) {
-    (void)sig;
-    g_sygnal_wyjscia = 1;
-}
 
 //Tworzy nowego kasjera
 Kasjer* StworzKasjera(int id_kasy) {
@@ -50,10 +41,7 @@ int PobierzKlientaZKolejki(int id_kasy, StanSklepu* stan, int sem_id) {
         id_klienta = kasa->kolejka[0];
         
         //Przesuniecie kolejki FIFO
-        for (int i = 0; i < kasa->liczba_w_kolejce - 1; i++) {
-            kasa->kolejka[i] = kasa->kolejka[i + 1];
-        }
-        kasa->liczba_w_kolejce--;
+        UsunZKolejki(kasa->kolejka, &kasa->liczba_w_kolejce, id_klienta);
     }
     
     ZwolnijSemafor(sem_id, MUTEX_KASY(id_kasy));
@@ -106,20 +94,9 @@ int UsunZKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, int 
     ZajmijSemafor(sem_id, sem_num);
     
     KasaStacjonarna* kasa = &stan->kasy_stacjonarne[id_kasy];
-    int znaleziono = 0;
     
-    //Szukaj klienta w kolejce
-    for (int i = 0; i < kasa->liczba_w_kolejce; i++) {
-        if (kasa->kolejka[i] == id_klienta) {
-            //Przesuniecie kolejki FIFO
-            for (int j = i; j < kasa->liczba_w_kolejce - 1; j++) {
-                kasa->kolejka[j] = kasa->kolejka[j + 1];
-            }
-            kasa->liczba_w_kolejce--;
-            znaleziono = 1;
-            break;
-        }
-    }
+    //Szukaj klienta w kolejce i usun
+    int znaleziono = UsunZKolejki(kasa->kolejka, &kasa->liczba_w_kolejce, id_klienta);
     
     ZwolnijSemafor(sem_id, sem_num);
     
@@ -137,10 +114,8 @@ int UsunZKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, int 
 void ObsluzKlienta(Kasjer* kasjer, int id_klienta, int liczba_produktow, double suma, int tryb_testu) {
     if (!kasjer) return;
     
-    char buf[256];
-    sprintf(buf, "Kasjer [Kasa %d]: Rozpoczynam obsluge klienta [ID: %d], produktow: %d",
+    ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Rozpoczynam obsluge klienta [ID: %d], produktow: %d",
             kasjer->id_kasy + 1, id_klienta, liczba_produktow);
-    ZapiszLog(LOG_INFO, buf);
     
     kasjer->stan = KASJER_OBSLUGUJE;
     
@@ -151,9 +126,8 @@ void ObsluzKlienta(Kasjer* kasjer, int id_klienta, int liczba_produktow, double 
         }
     }
     
-    sprintf(buf, "Kasjer [Kasa %d]: Zakonczono obsluge klienta [ID: %d]. Suma: %.2f PLN",
+    ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Zakonczono obsluge klienta [ID: %d]. Suma: %.2f PLN",
             kasjer->id_kasy + 1, id_klienta, suma);
-    ZapiszLog(LOG_INFO, buf);
     
     kasjer->czas_ostatniej_aktywnosci = time(NULL);
     kasjer->stan = KASJER_CZEKA_NA_KLIENTA;
@@ -167,10 +141,64 @@ int CzyOtworzycKase1(StanSklepu* stan) {
     return stan->kasy_stacjonarne[0].liczba_w_kolejce > 3;
 }
 
+//Migracja klientow z kolejki kasy 1 do kasy 2 (wywolywane przy otwarciu kasy 2)
+int MigrujKlientowDoKasy2(StanSklepu* stan, int sem_id) {
+    if (!stan) return 0;
+    
+    ZajmijSemafor(sem_id, MUTEX_KASY(0));  //Blokada kasy 1
+    ZajmijSemafor(sem_id, MUTEX_KASY(1));  //Blokada kasy 2
+    
+    KasaStacjonarna* kasa1 = &stan->kasy_stacjonarne[0];
+    KasaStacjonarna* kasa2 = &stan->kasy_stacjonarne[1];
+    
+    //Przenies polowe klientow z kasy 1 (max 5 osob)
+    int do_przeniesienia = kasa1->liczba_w_kolejce / 2;
+    if (do_przeniesienia > 5) do_przeniesienia = 5;
+    
+    int przeniesiono = 0;
+    
+    for (int i = 0; i < do_przeniesienia && kasa2->liczba_w_kolejce < MAX_KOLEJKA_STACJONARNA; i++) {
+        //Bierzemy klientow z konca kolejki kasy 1 (ostatnio dolaczyli)
+        int idx = kasa1->liczba_w_kolejce - 1;
+        if (idx < 0) break;
+        
+        int id_klienta = kasa1->kolejka[idx];
+        
+        //Dodaj do kasy 2
+        kasa2->kolejka[kasa2->liczba_w_kolejce] = id_klienta;
+        kasa2->liczba_w_kolejce++;
+        
+        //Usun z kasy 1
+        kasa1->kolejka[idx] = -1;
+        kasa1->liczba_w_kolejce--;
+        
+        przeniesiono++;
+    }
+    
+    ZwolnijSemafor(sem_id, MUTEX_KASY(1));
+    ZwolnijSemafor(sem_id, MUTEX_KASY(0));
+    
+    //Aktualizacja semaforow sygnalizujacych klientow w kolejkach
+    for (int i = 0; i < przeniesiono; i++) {
+        //Zmniejsz semafor kasy 1
+        struct timespec timeout = {0, 0};
+        struct sembuf op = {SEM_KLIENCI_KOLEJKA(0), -1, 0};
+        semtimedop(sem_id, &op, 1, &timeout);
+        
+        //Zwieksz semafor kasy 2
+        ZwolnijSemafor(sem_id, SEM_KLIENCI_KOLEJKA(1));
+    }
+    
+    if (przeniesiono > 0) {
+        ZapiszLogF(LOG_INFO, "Kierownik: Przeniesiono %d klientow z kasy 1 do kasy 2.", przeniesiono);
+    }
+    
+    return przeniesiono;
+}
+
 //Punkt wejscia dla procesu kasjera
 #ifdef KASJER_STANDALONE
 int main(int argc, char* argv[]) {
-    //Sprawdzenie argumentow przekazanych do programu
     if (argc != 2) {
         fprintf(stderr, "Uzycie: %s <id_kasy>\n", argv[0]);
         return 1;
@@ -184,22 +212,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    //Dolaczenie do pamieci wspoldzielonej
-    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
-    if (!stan_sklepu) {
-        fprintf(stderr, "Kasjer [Kasa %d]: Nie mozna dolaczyc do pamieci wspoldzielonej\n", id_kasy + 1);
+    StanSklepu* stan_sklepu;
+    int sem_id;
+    
+    if (InicjalizujProcesPochodny(&stan_sklepu, &sem_id, "Kasjer") == -1) {
         return 1;
     }
     
-    //Dolaczenie do semaforow
-    int sem_id = DolaczSemafory();
-    if (sem_id == -1) {
-        fprintf(stderr, "Kasjer [Kasa %d]: Nie mozna dolaczyc do semaforow\n", id_kasy + 1);
-        OdlaczPamiecWspoldzielona(stan_sklepu);
-        return 1;
-    }
-    
-    //Utworzenie kasjera
     Kasjer* kasjer = StworzKasjera(id_kasy);
     if (!kasjer) {
         fprintf(stderr, "Kasjer [Kasa %d]: Nie udalo sie utworzyc kasjera\n", id_kasy + 1);
@@ -207,22 +226,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
-    InicjalizujSystemLogowania();
+    signal(SIGTERM, ObslugaSygnaluWyjscia);
     
-    //Rejestracja handlera SIGTERM
-    signal(SIGTERM, ObslugaSygnaluWyjsciaKasjer);
-    
-    char buf[256];
-    sprintf(buf, "Kasjer [Kasa %d]: Proces uruchomiony, oczekuje na otwarcie kasy.", id_kasy + 1);
-    ZapiszLog(LOG_INFO, buf);
+    ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Proces uruchomiony, oczekuje na otwarcie kasy.", id_kasy + 1);
     
     //Glowna petla kasjera
     while (1) {
-        //Sprawdzenie flagi ewakuacji lub sygnalu wyjscia
-        if (stan_sklepu->flaga_ewakuacji || g_sygnal_wyjscia) {
-            sprintf(buf, "Kasjer [Kasa %d]: Otrzymano sygnal ewakuacji, koncze prace.", id_kasy + 1);
-            ZapiszLog(LOG_INFO, buf);
+        if (CZY_KONCZYC(stan_sklepu)) {
+            ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Otrzymano sygnal ewakuacji, koncze prace.", id_kasy + 1);
             break;
         }
         
@@ -238,8 +249,7 @@ int main(int argc, char* argv[]) {
             if (w_kolejce > 0) {
                 stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMYKANA;
                 stan_kasy = KASA_ZAMYKANA;
-                sprintf(buf, "Kasjer [Kasa %d]: Polecenie zamkniecia - przechodze w tryb ZAMYKANA (kolejka: %d).", id_kasy + 1, w_kolejce);
-                ZapiszLog(LOG_INFO, buf);
+                ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Polecenie zamkniecia - przechodze w tryb ZAMYKANA (kolejka: %d).", id_kasy + 1, w_kolejce);
                 
                 //Wyczysc polecenie bo juz zareagowalismy (stan ZAMYKANA wystarczy)
                 stan_sklepu->polecenie_kierownika = 0;
@@ -255,8 +265,7 @@ int main(int argc, char* argv[]) {
             stan_kasy = KASA_WOLNA;
             ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             
-            sprintf(buf, "Kasjer [Kasa %d]: Automatyczne otwarcie kasy (>= 3 osoby w kolejce).", id_kasy + 1);
-            ZapiszLog(LOG_INFO, buf);
+            ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Automatyczne otwarcie kasy (>= 3 osoby w kolejce).", id_kasy + 1);
         } else {
             ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         }
@@ -264,20 +273,14 @@ int main(int argc, char* argv[]) {
         if (stan_kasy == KASA_ZAMKNIETA) {
             kasjer->stan = KASJER_NIEAKTYWNY;
             
-            //Blokujace czekanie na sygnal otwarcia kasy (max 2 sek)
-            struct timespec timeout = {2, 0};
-            struct sembuf op = {SEM_OTWORZ_KASA_STACJ(id_kasy), -1, 0};
-            semtimedop(sem_id, &op, 1, &timeout);  //Czeka na sygnal lub timeout
+            CzekajNaSemafor(sem_id, SEM_OTWORZ_KASA_STACJ(id_kasy), 2);
             continue;
         }
         
         kasjer->stan = KASJER_CZEKA_NA_KLIENTA;
         
-        //Blokujace czekanie na klienta w kolejce (max 1 sek dla sprawdzenia ewakuacji/zamkniecia)
-        struct timespec timeout = {1, 0};
-        struct sembuf op = {SEM_KLIENCI_KOLEJKA(id_kasy), -1, 0};
-        
-        if (semtimedop(sem_id, &op, 1, &timeout) == 0) {
+        //Blokujace czekanie na klienta w kolejce (max 1 sek)
+        if (CzekajNaSemafor(sem_id, SEM_KLIENCI_KOLEJKA(id_kasy), 1) == 0) {
             //Jest klient w kolejce
             int id_klienta = PobierzKlientaZKolejki(id_kasy, stan_sklepu, sem_id);
             
@@ -319,8 +322,7 @@ int main(int argc, char* argv[]) {
             ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             
             if ((aktualny_stan == KASA_ZAMYKANA || (polecenie == 2 && kasa_do_zamkniecia == id_kasy)) && w_kolejce == 0) {
-                sprintf(buf, "Kasjer [Kasa %d]: Polecenie kierownika - zamykam kase.", id_kasy + 1);
-                ZapiszLog(LOG_INFO, buf);
+                ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Polecenie kierownika - zamykam kase.", id_kasy + 1);
                 
                 ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
@@ -337,9 +339,8 @@ int main(int argc, char* argv[]) {
                 if (ostatnia_obsluga > 0 && w_kolejce == 0 && 
                     (teraz - ostatnia_obsluga) >= timeout_zamkniecia) {
                     
-                    sprintf(buf, "Kasjer [Kasa %d]: Brak klientow przez %d sekund, zamykam kase.",
+                    ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Brak klientow przez %d sekund, zamykam kase.",
                             id_kasy + 1, timeout_zamkniecia);
-                    ZapiszLog(LOG_INFO, buf);
                     
                     ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                     stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;

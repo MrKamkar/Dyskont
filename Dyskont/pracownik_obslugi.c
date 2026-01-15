@@ -1,17 +1,8 @@
 #include "pracownik_obslugi.h"
-#include "semafory.h"
-#include "logi.h"
+#include "wspolne.h"
 #include <string.h>
 #include <sys/select.h>
 #include <signal.h>
-
-//Flaga sygnalu wyjscia (SIGTERM)
-static volatile sig_atomic_t g_sygnal_wyjscia = 0;
-
-void ObslugaSygnaluWyjsciaPracownik(int sig) {
-    (void)sig;
-    g_sygnal_wyjscia = 1;
-}
 
 //Inicjalizacja FIFO, tworzy lacze nazwane
 int InicjalizujFifoObslugi() {
@@ -43,8 +34,8 @@ int WyslijZadanieObslugi(ZadanieObslugi* zadanie) {
     //Otwarcie FIFO do zapisu (nieblokujace)
     int fd = open(FIFO_OBSLUGA, O_WRONLY | O_NONBLOCK);
     if (fd == -1) {
-        //ENXIO = brak czytnika na FIFO, normalna sytuacja przy ewakuacji/zamykaniu
-        if (errno != ENXIO) {
+        //ENXIO = brak czytnika, ENOENT = brak pliku
+        if (errno != ENXIO && errno != ENOENT) {
             perror("Blad otwarcia FIFO do zapisu");
         }
         return -1;
@@ -87,31 +78,17 @@ int OdbierzZadanieObslugi(ZadanieObslugi* zadanie) {
 //Glowna funkcja procesu pracownika obslugi
 #ifdef PRACOWNIK_STANDALONE
 int main() {
+    StanSklepu* stan_sklepu;
+    int sem_id;
     
-    //Dolaczenie do pamieci wspoldzielonej
-    StanSklepu* stan_sklepu = DolaczPamiecWspoldzielona();
-    if (!stan_sklepu) {
-        fprintf(stderr, "Pracownik: Nie mozna dolaczyc do pamieci wspoldzielonej\n");
+    if (InicjalizujProcesPochodny(&stan_sklepu, &sem_id, "Pracownik") == -1) {
         return 1;
     }
     
-    //Dolaczenie do semaforow
-    int sem_id = DolaczSemafory();
-    if (sem_id == -1) {
-        fprintf(stderr, "Pracownik: Nie mozna dolaczyc do semaforow\n");
-        OdlaczPamiecWspoldzielona(stan_sklepu);
-        return 1;
-    }
-    
-    //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
-    InicjalizujSystemLogowania();
-    
-    //Rejestracja handlera SIGTERM
-    signal(SIGTERM, ObslugaSygnaluWyjsciaPracownik);
+    signal(SIGTERM, ObslugaSygnaluWyjscia);
     
     ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na FIFO...");
     
-    char buf[256];
     
     //Otwarcie FIFO do odczytu nieblokujace, pozwala sprawdzac flage ewakuacji
     int fd = open(FIFO_OBSLUGA, O_RDONLY | O_NONBLOCK);
@@ -123,8 +100,7 @@ int main() {
     
     //Glowna petla pracownika
     while (1) {
-        //Sprawdzenie flagi ewakuacji lub sygnalu wyjscia
-        if (stan_sklepu->flaga_ewakuacji || g_sygnal_wyjscia) {
+        if (CZY_KONCZYC(stan_sklepu)) {
             ZapiszLog(LOG_INFO, "Pracownik obslugi: Ewakuacja - koncze prace.");
             break;
         }
@@ -145,9 +121,8 @@ int main() {
                 //Przetworzenie zadania
                 switch (zadanie.typ) {
                     case ZADANIE_ODBLOKUJ_KASE:
-                        sprintf(buf, "Pracownik obslugi: Odblokowuje kase samoobslugowa [%d] dla klienta [%d]",
+                        ZapiszLogF(LOG_INFO, "Pracownik obslugi: Odblokowuje kase samoobslugowa [%d] dla klienta [%d]",
                                 zadanie.id_kasy + 1, zadanie.id_klienta);
-                        ZapiszLog(LOG_INFO, buf);
                         
                         //Symulacja czasu interwencji
                         SYMULACJA_USLEEP(stan_sklepu, 500000); //500ms
@@ -162,26 +137,21 @@ int main() {
                         //Sygnal odblokowania - budzi czekajacego klienta
                         ZwolnijSemafor(sem_id, SEM_ODBLOKUJ_KASA_SAMO(zadanie.id_kasy));
                         
-                        sprintf(buf, "Pracownik obslugi: Kasa samoobslugowa [%d] odblokowana.", zadanie.id_kasy + 1);
-                        ZapiszLog(LOG_INFO, buf);
+                        ZapiszLogF(LOG_INFO, "Pracownik obslugi: Kasa samoobslugowa [%d] odblokowana.", zadanie.id_kasy + 1);
                         break;
                         
                     case ZADANIE_WERYFIKUJ_WIEK:
-                        sprintf(buf, "Pracownik obslugi: Weryfikacja wieku klienta [%d], wiek: %d",
+                        ZapiszLogF(LOG_INFO, "Pracownik obslugi: Weryfikacja wieku klienta [%d], wiek: %d",
                                 zadanie.id_klienta, zadanie.wiek_klienta);
-                        ZapiszLog(LOG_INFO, buf);
                         
-                        //Symulacja weryfikacji
-                        SYMULACJA_USLEEP(stan_sklepu, 300000); //300ms
+                        SYMULACJA_USLEEP(stan_sklepu, 300000);
                         
                         if (zadanie.wiek_klienta >= 18) {
-                            sprintf(buf, "Pracownik obslugi: Wiek OK - klient [%d] moze kupic alkohol.",
+                            ZapiszLogF(LOG_INFO, "Pracownik obslugi: Wiek OK - klient [%d] moze kupic alkohol.",
                                     zadanie.id_klienta);
-                            ZapiszLog(LOG_INFO, buf);
                         } else {
-                            sprintf(buf, "Pracownik obslugi: ODMOWA - klient [%d] niepelnoletni!",
+                            ZapiszLogF(LOG_BLAD, "Pracownik obslugi: ODMOWA - klient [%d] niepelnoletni!",
                                     zadanie.id_klienta);
-                            ZapiszLog(LOG_BLAD, buf);
                         }
                         break;
                 }
