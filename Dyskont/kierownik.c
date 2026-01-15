@@ -105,8 +105,8 @@ void PokazStatusKas(StanSklepu* stan, int sem_id) {
         const char* status;
         switch (stan->kasy_stacjonarne[i].stan) {
             case KASA_ZAMKNIETA: status = "ZAMKNIETA"; break;
-            case KASA_WOLNA: status = "WOLNA"; break;
-            case KASA_ZAJETA: status = "ZAJETA"; break;
+            case KASA_WOLNA: status = "CZYNNA"; break;
+            case KASA_ZAJETA: status = "CZYNNA"; break;
             case KASA_ZABLOKOWANA: status = "ZABLOKOWANA"; break;
             case KASA_ZAMYKANA: status = "ZAMYKANA"; break;
             default: status = "NIEZNANY";

@@ -3,6 +3,15 @@
 #include "logi.h"
 #include <string.h>
 #include <sys/select.h>
+#include <signal.h>
+
+//Flaga sygnalu wyjscia (SIGTERM)
+static volatile sig_atomic_t g_sygnal_wyjscia = 0;
+
+void ObslugaSygnaluWyjsciaPracownik(int sig) {
+    (void)sig;
+    g_sygnal_wyjscia = 1;
+}
 
 //Inicjalizacja FIFO, tworzy lacze nazwane
 int InicjalizujFifoObslugi() {
@@ -34,7 +43,10 @@ int WyslijZadanieObslugi(ZadanieObslugi* zadanie) {
     //Otwarcie FIFO do zapisu (nieblokujace)
     int fd = open(FIFO_OBSLUGA, O_WRONLY | O_NONBLOCK);
     if (fd == -1) {
-        perror("Blad otwarcia FIFO do zapisu");
+        //ENXIO = brak czytnika na FIFO, normalna sytuacja przy ewakuacji/zamykaniu
+        if (errno != ENXIO) {
+            perror("Blad otwarcia FIFO do zapisu");
+        }
         return -1;
     }
     
@@ -94,6 +106,9 @@ int main() {
     //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
     InicjalizujSystemLogowania();
     
+    //Rejestracja handlera SIGTERM
+    signal(SIGTERM, ObslugaSygnaluWyjsciaPracownik);
+    
     ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na FIFO...");
     
     char buf[256];
@@ -106,10 +121,10 @@ int main() {
         return 1;
     }
     
-    //Glowna petla pracownika - uzywa select() z timeoutem zamiast usleep
+    //Glowna petla pracownika
     while (1) {
-        //Sprawdzenie flagi ewakuacji
-        if (stan_sklepu->flaga_ewakuacji) {
+        //Sprawdzenie flagi ewakuacji lub sygnalu wyjscia
+        if (stan_sklepu->flaga_ewakuacji || g_sygnal_wyjscia) {
             ZapiszLog(LOG_INFO, "Pracownik obslugi: Ewakuacja - koncze prace.");
             break;
         }

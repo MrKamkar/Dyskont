@@ -19,6 +19,12 @@ static char g_sciezka[256];
 static volatile sig_atomic_t g_aktywnych_klientow = 0;
 static volatile sig_atomic_t g_calkowita_liczba_klientow = 0;
 
+//Pusty handler SIGALRM do wybudzania pause()
+void ObslugaSIGALRM(int sig) {
+    (void)sig;
+    //Tylko wybudza pause()
+}
+
 //Handler SIGCHLD - zbiera zakonczone procesy
 void ObslugaSIGCHLD(int sig) {
     (void)sig;
@@ -293,11 +299,11 @@ int main(int argc, char* argv[]) {
     
     ZapiszLog(LOG_INFO, "Rozpoczynam ciagla symulacje klientow...");
     
-    //Ustawienie alarmu co 1 sekunde dla statusu i kontroli czasu
+    //Ustawienie alarmu (zegar symulacji)
     alarm(1);
-    signal(SIGALRM, SIG_IGN);  //Ignorujemy SIGALRM, tylko przerywa pause()
+    signal(SIGALRM, ObslugaSIGALRM);
     
-    //Glowna petla symulacji - BEZ POLLINGU!
+    //Glowna petla symulacji
     while (time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji) {
         
         //Tworz nowych klientow jesli jest miejsce
@@ -336,9 +342,9 @@ int main(int argc, char* argv[]) {
                 teraz - czas_startu, CZAS_SYMULACJI_SEK, (int)g_aktywnych_klientow, id_klienta);
         ZapiszLog(LOG_INFO, buf);
         
-        //Blokujace oczekiwanie na sygnal (SIGCHLD, SIGALRM, itp.) - BEZ POLLINGU!
-        alarm(1);  //Nastepny alarm za 1 sek
-        pause();   //Proces zasypia do sygnalu - 0% CPU!
+        //Oczekiwanie na sygnal
+        alarm(1);
+        pause();
     }
     
     alarm(0);  //Wylacz alarm
@@ -346,9 +352,19 @@ int main(int argc, char* argv[]) {
     sprintf(buf, "Koniec symulacji. Czekam na %d pozostalych klientow...", (int)g_aktywnych_klientow);
     ZapiszLog(LOG_INFO, buf);
     
-    //Oczekiwanie na zakonczenie pozostalych procesow klienckich (blokujace)
-    while (g_aktywnych_klientow > 0) {
-        pause();  //Czeka na SIGCHLD
+    //Oczekiwanie na zakonczenie pozostalych procesow klienckich (z timeoutem)
+    time_t czas_oczekiwania_start = time(NULL);
+    int timeout_klientow = 10;  //Max 10 sekund na zakonczenie klientow
+    
+    while (g_aktywnych_klientow > 0 && (time(NULL) - czas_oczekiwania_start) < timeout_klientow) {
+        alarm(1);  //Przerwij pause() po 1 sek
+        pause();   //Czeka na SIGCHLD lub SIGALRM
+    }
+    alarm(0);
+    
+    if (g_aktywnych_klientow > 0) {
+        sprintf(buf, "Timeout! Pozostalo %d klientow, kontynuuje zamykanie.", (int)g_aktywnych_klientow);
+        ZapiszLog(LOG_OSTRZEZENIE, buf);
     }
     
     sprintf(buf, "Symulacja zakonczona. Laczna liczba klientow pomyslnie: %d", (int)g_calkowita_liczba_klientow);
@@ -360,9 +376,20 @@ int main(int argc, char* argv[]) {
     g_stan_sklepu->flaga_ewakuacji = 1;
     ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
-    //Oczekiwanie na zakonczenie procesow kasjerow
+    //Wyslij SIGTERM do wszystkich procesow pomocniczych aby wybudzic z semaforow
     for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
-        int status;
+        kill(pid_kasjerow[i], SIGTERM);
+    }
+    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
+        kill(pid_kas_samo[i], SIGTERM);
+    }
+    kill(pid_pracownik, SIGTERM);
+    
+    int status;
+    
+    //Oczekiwanie na zakonczenie procesow kasjerow - blokujace waitpid
+    //Po wyslaniu SIGTERM procesy powinny zakonczyc sie szybko
+    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
         waitpid(pid_kasjerow[i], &status, 0);
         sprintf(buf, "Proces kasjera [Kasa: %d] zakonczony.", i + 1);
         ZapiszLog(LOG_INFO, buf);
@@ -370,14 +397,12 @@ int main(int argc, char* argv[]) {
     
     //Oczekiwanie na zakonczenie procesow kas samoobslugowych
     for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-        int status;
         waitpid(pid_kas_samo[i], &status, 0);
         sprintf(buf, "Proces kasy samoobslugowej [Kasa: %d] zakonczony.", i + 1);
         ZapiszLog(LOG_INFO, buf);
     }
     
     //Oczekiwanie na zakonczenie procesu pracownika obslugi
-    int status;
     waitpid(pid_pracownik, &status, 0);
     ZapiszLog(LOG_INFO, "Proces pracownika obslugi zakonczony.");
     

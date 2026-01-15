@@ -19,7 +19,7 @@
 
 //Funkcje zarzadzania kolejka samoobslugowa
 int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id);
-int PobierzZKolejkiSamoobslugowej(StanSklepu* stan, int sem_id);
+int UsunKlientaZKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id);
 int ZnajdzWolnaKase(StanSklepu* stan, int sem_id);
 int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id);
 void ZwolnijKase(int id_kasy, StanSklepu* stan, int sem_id);

@@ -12,7 +12,8 @@ static key_t GenerujKlucz() {
 
 //Wykonanie operacji na semaforze
 static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
-    struct sembuf operacja = { sem_num, wartosc, SEM_UNDO };
+    //SEM_UNDO powoduje desynchronizacje semaforow zliczajacych wiec trzeba dac 0
+    struct sembuf operacja = { sem_num, wartosc, 0 };
     
     if (semop(sem_id, &operacja, 1) == -1) {
         if (errno != EINVAL && errno != EIDRM) {

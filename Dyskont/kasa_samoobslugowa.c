@@ -3,6 +3,20 @@
 #include "semafory.h"
 #include "logi.h"
 #include <string.h>
+#include <signal.h>
+
+//Flaga sygnalu wyjscia (SIGTERM)
+static volatile sig_atomic_t g_sygnal_wyjscia = 0;
+
+void ObslugaSygnaluWyjsciaKasaSamo(int sig) {
+    (void)sig;
+    g_sygnal_wyjscia = 1;
+}
+
+//Pusty handler SIGALRM
+void ObslugaSigAlarmKasaSamo(int sig) {
+    (void)sig;
+}
 
 //Dodaje klienta do wspolnej kolejki samoobslugowej
 int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
@@ -21,25 +35,27 @@ int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
     return wynik;
 }
 
-//Pobiera pierwszego klienta z kolejki (FIFO)
-int PobierzZKolejkiSamoobslugowej(StanSklepu* stan, int sem_id) {
+//Usuwa konkretnego klienta z kolejki samoobslugowej po ID
+int UsunKlientaZKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
     if (!stan) return -1;
     
     ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
     
-    int id_klienta = -1;
-    if (stan->liczba_w_kolejce_samo > 0) {
-        id_klienta = stan->kolejka_samo[0];
-        
-        //Przesuniecie kolejki FIFO
-        for (int i = 0; i < stan->liczba_w_kolejce_samo - 1; i++) {
-            stan->kolejka_samo[i] = stan->kolejka_samo[i + 1];
+    int znaleziono = 0;
+    for (int i = 0; i < stan->liczba_w_kolejce_samo; i++) {
+        if (stan->kolejka_samo[i] == id_klienta) {
+            //Przesuniecie reszty kolejki
+            for (int j = i; j < stan->liczba_w_kolejce_samo - 1; j++) {
+                stan->kolejka_samo[j] = stan->kolejka_samo[j + 1];
+            }
+            stan->liczba_w_kolejce_samo--;
+            znaleziono = 1;
+            break;
         }
-        stan->liczba_w_kolejce_samo--;
     }
     
     ZwolnijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
-    return id_klienta;
+    return znaleziono ? 0 : -1;
 }
 
 //Szuka wolnej kasy samoobslugowej, zwraca jej indeks lub -1
@@ -175,11 +191,18 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
             zadanie.wiek_klienta = wiek;
             WyslijZadanieObslugi(&zadanie);
             
-            //Czekaj az pracownik odblokuje kase - blokujacy semafor zamiast polling
+            //Czekaj na odblokowanie przez pracownika
             int timeout_blokady = 0;
-            int pozostaly_czas = MAX_CZAS_OCZEKIWANIA;
+            //Ustawienie timeoutu (2s w teście, 30s normalnie)
+            int pozostaly_czas = (stan->tryb_testu == 1) ? 2 : MAX_CZAS_OCZEKIWANIA;
             
             while (pozostaly_czas > 0) {
+                //Sprawdz flage ewakuacji
+                if (stan->flaga_ewakuacji) {
+                    ZwolnijKase(id_kasy, stan, sem_id);
+                    return -3;  //Ewakuacja
+                }
+                
                 //Blokujace czekanie na sygnal odblokowania (max 1 sek)
                 struct timespec timeout = {1, 0};
                 struct sembuf op = {SEM_ODBLOKUJ_KASA_SAMO(id_kasy), -1, 0};
@@ -280,6 +303,11 @@ int main(int argc, char* argv[]) {
     //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
     InicjalizujSystemLogowania();
     
+    //Rejestracja handlera SIGTERM
+    signal(SIGTERM, ObslugaSygnaluWyjsciaKasaSamo);
+    //SIGALRM - pusty handler, zeby pause() sie obudzil
+    signal(SIGALRM, ObslugaSigAlarmKasaSamo);
+    
     srand(time(NULL) ^ getpid());
     
     char buf[256];
@@ -288,8 +316,8 @@ int main(int argc, char* argv[]) {
     
     //Glowna petla - proces monitorujacy, uzywa semtimedop z timeoutem
     while (1) {
-        //Sprawdzenie flagi ewakuacji
-        if (stan_sklepu->flaga_ewakuacji) {
+        //Sprawdzenie flagi ewakuacji lub sygnalu wyjscia
+        if (stan_sklepu->flaga_ewakuacji || g_sygnal_wyjscia) {
             sprintf(buf, "Kasa samoobslugowa [%d]: Ewakuacja - koncze prace.", id_kasy + 1);
             ZapiszLog(LOG_INFO, buf);
             break;
@@ -305,11 +333,10 @@ int main(int argc, char* argv[]) {
             AktualizujLiczbeKas(stan_sklepu, sem_id);
         }
         
-        //Blokujace czekanie z timeoutem (2 sekundy) zamiast usleep
-        //Uzywamy semafora ktory nigdy nie jest sygnalizowany - czyste czekanie z timeoutem
-        struct timespec timeout = {2, 0};
-        struct sembuf op = {SEM_ODBLOKUJ_KASA_SAMO(id_kasy), -1, IPC_NOWAIT};
-        semtimedop(sem_id, &op, 1, &timeout);  //Zawsze timeout, ale CPU nie polluje
+        //Oczekiwanie z timeoutem 2s (alarm + pause)
+        alarm(2);
+        pause();
+        alarm(0);  //Wylacz alarm
     }
     
     OdlaczPamiecWspoldzielona(stan_sklepu);

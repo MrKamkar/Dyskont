@@ -32,6 +32,7 @@ void UsunKasjera(Kasjer* kasjer);
 
 int PobierzKlientaZKolejki(int id_kasy, StanSklepu* stan, int sem_id);
 int DodajDoKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id);
+int UsunZKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id);
 void ObsluzKlienta(Kasjer* kasjer, int id_klienta, int liczba_produktow, double suma, int tryb_testu);
 int CzyOtworzycKase1(StanSklepu* stan);
 

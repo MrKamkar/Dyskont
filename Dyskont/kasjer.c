@@ -2,6 +2,15 @@
 #include "semafory.h"
 #include "logi.h"
 #include <string.h>
+#include <signal.h>
+
+//Flaga sygnalu wyjscia (SIGTERM)
+static volatile sig_atomic_t g_sygnal_wyjscia = 0;
+
+void ObslugaSygnaluWyjsciaKasjer(int sig) {
+    (void)sig;
+    g_sygnal_wyjscia = 1;
+}
 
 //Tworzy nowego kasjera
 Kasjer* StworzKasjera(int id_kasy) {
@@ -86,6 +95,44 @@ int DodajDoKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, in
     return wynik;
 }
 
+//Usuwa klienta z kolejki kasy stacjonarnej raz dekrementuje semafor SEM_KLIENCI_KOLEJKA
+int UsunZKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
+    if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_STACJONARNYCH) {
+        return -1;
+    }
+    
+    int sem_num = MUTEX_KASY(id_kasy);
+    
+    ZajmijSemafor(sem_id, sem_num);
+    
+    KasaStacjonarna* kasa = &stan->kasy_stacjonarne[id_kasy];
+    int znaleziono = 0;
+    
+    //Szukaj klienta w kolejce
+    for (int i = 0; i < kasa->liczba_w_kolejce; i++) {
+        if (kasa->kolejka[i] == id_klienta) {
+            //Przesuniecie kolejki FIFO
+            for (int j = i; j < kasa->liczba_w_kolejce - 1; j++) {
+                kasa->kolejka[j] = kasa->kolejka[j + 1];
+            }
+            kasa->liczba_w_kolejce--;
+            znaleziono = 1;
+            break;
+        }
+    }
+    
+    ZwolnijSemafor(sem_id, sem_num);
+    
+    //Dekrementuj semafor jesli usunieto klienta (bez blokowania)
+    if (znaleziono) {
+        struct timespec timeout = {0, 0};  //Natychmiastowy timeout
+        struct sembuf op = {SEM_KLIENCI_KOLEJKA(id_kasy), -1, 0};
+        semtimedop(sem_id, &op, 1, &timeout);  //Jesli semafor=0, po prostu nie robi nic
+    }
+    
+    return znaleziono ? 0 : -1;
+}
+
 //Obsluga klienta przez kasjera
 void ObsluzKlienta(Kasjer* kasjer, int id_klienta, int liczba_produktow, double suma, int tryb_testu) {
     if (!kasjer) return;
@@ -163,14 +210,17 @@ int main(int argc, char* argv[]) {
     //Inicjalizacja systemu logowania (uzywa globalnej sciezki IPC_SCIEZKA)
     InicjalizujSystemLogowania();
     
+    //Rejestracja handlera SIGTERM
+    signal(SIGTERM, ObslugaSygnaluWyjsciaKasjer);
+    
     char buf[256];
     sprintf(buf, "Kasjer [Kasa %d]: Proces uruchomiony, oczekuje na otwarcie kasy.", id_kasy + 1);
     ZapiszLog(LOG_INFO, buf);
     
     //Glowna petla kasjera
     while (1) {
-        //Sprawdzenie flagi ewakuacji
-        if (stan_sklepu->flaga_ewakuacji) {
+        //Sprawdzenie flagi ewakuacji lub sygnalu wyjscia
+        if (stan_sklepu->flaga_ewakuacji || g_sygnal_wyjscia) {
             sprintf(buf, "Kasjer [Kasa %d]: Otrzymano sygnal ewakuacji, koncze prace.", id_kasy + 1);
             ZapiszLog(LOG_INFO, buf);
             break;
@@ -256,49 +306,11 @@ int main(int argc, char* argv[]) {
             }
         } else {
             //Timeout (brak sygnalu na semaforze przez 1 sekunde)
-            
-            //Sprawdz stan kolejki - jesli sa ludzie, a semafor timeoutowal, to mamy desynchronizacje!
-            ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-            KasaStacjonarna* kasa = &stan_sklepu->kasy_stacjonarne[id_kasy];
-            int w_kolejce_check = kasa->liczba_w_kolejce;
-            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-            
-            if (w_kolejce_check > 0) {
-                //Awaryjna obsluga - semafor "zgubil" klientow
-                //ZapiszLog(LOG_DEBUG, "Kasjer [Kasa %d]: Obsluga w trybie polling (semafor=0, kolejka>0).");
-                
-                int id_klienta = PobierzKlientaZKolejki(id_kasy, stan_sklepu, sem_id);
-                if (id_klienta != -1) {
-                    int liczba_produktow = 3 + (rand() % 8);
-                    double suma = liczba_produktow * 10.0;
-                    
-                    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                    //Jesli jest ZAMYKANA, nie zmieniaj na ZAJETA
-                    if (stan_sklepu->kasy_stacjonarne[id_kasy].stan != KASA_ZAMYKANA) {
-                        stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAJETA;
-                    }
-                    stan_sklepu->kasy_stacjonarne[id_kasy].id_klienta = id_klienta;
-                    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                    
-                    ObsluzKlienta(kasjer, id_klienta, liczba_produktow, suma, stan_sklepu->tryb_testu);
-                    
-                    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                    //Jesli jest ZAMYKANA, nie zmieniaj na WOLNA
-                    if (stan_sklepu->kasy_stacjonarne[id_kasy].stan != KASA_ZAMYKANA) {
-                        stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_WOLNA;
-                    }
-                    stan_sklepu->kasy_stacjonarne[id_kasy].id_klienta = -1;
-                    stan_sklepu->kasy_stacjonarne[id_kasy].czas_ostatniej_obslugi = time(NULL);
-                    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                }
-                continue; //Wroc do petli
-            }
-
             //Standardowa logika zamykania (gdy kolejka pusta)
             time_t teraz = time(NULL);
             
             ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-            kasa = &stan_sklepu->kasy_stacjonarne[id_kasy];
+            KasaStacjonarna* kasa = &stan_sklepu->kasy_stacjonarne[id_kasy];
             time_t ostatnia_obsluga = kasa->czas_ostatniej_obslugi;
             int w_kolejce = kasa->liczba_w_kolejce;
             int polecenie = stan_sklepu->polecenie_kierownika;
@@ -318,19 +330,23 @@ int main(int argc, char* argv[]) {
                 
                 kasjer->stan = KASJER_ZAMYKA_KASE;
             }
-            //30 sekund bez klienta, zamkniecie kasy
-            else if (ostatnia_obsluga > 0 && w_kolejce == 0 && 
-                (teraz - ostatnia_obsluga) >= CZAS_BEZCZYNNOSCI_DO_ZAMKNIECIA) {
+            //Zamkniecie kasy po bezczynnosci
+            else {
+                int timeout_zamkniecia = (stan_sklepu->tryb_testu == 1) ? 2 : CZAS_BEZCZYNNOSCI_DO_ZAMKNIECIA;
                 
-                sprintf(buf, "Kasjer [Kasa %d]: Brak klientow przez %d sekund, zamykam kase.",
-                        id_kasy + 1, CZAS_BEZCZYNNOSCI_DO_ZAMKNIECIA);
-                ZapiszLog(LOG_INFO, buf);
-                
-                ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
-                ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                
-                kasjer->stan = KASJER_ZAMYKA_KASE;
+                if (ostatnia_obsluga > 0 && w_kolejce == 0 && 
+                    (teraz - ostatnia_obsluga) >= timeout_zamkniecia) {
+                    
+                    sprintf(buf, "Kasjer [Kasa %d]: Brak klientow przez %d sekund, zamykam kase.",
+                            id_kasy + 1, timeout_zamkniecia);
+                    ZapiszLog(LOG_INFO, buf);
+                    
+                    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                    stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
+                    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                    
+                    kasjer->stan = KASJER_ZAMYKA_KASE;
+                }
             }
         }
     }

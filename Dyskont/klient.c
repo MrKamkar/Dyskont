@@ -201,7 +201,7 @@ int main(int argc, char* argv[]) {
             idzie_do_samoobslugowej = 0;
         } else {
             
-            //Czekaj na wolna kase - blokujacy semafor
+            //Czekaj na wolna kase
             int id_kasy = -1;
             time_t czas_startu_oczekiwania = time(NULL);
             
@@ -218,11 +218,12 @@ int main(int argc, char* argv[]) {
                     goto wyjscie;
                 }
                 
-                //Sprawdz czy nie przekroczono czasu T
+                //Sprawdz czas oczekiwania
                 time_t teraz = time(NULL);
-                if ((teraz - czas_startu_oczekiwania) >= MAX_CZAS_KOLEJKI) {
+                int timeout_kolejki = (stan_sklepu->tryb_testu == 1) ? 2 : MAX_CZAS_KOLEJKI;
+                if ((teraz - czas_startu_oczekiwania) >= timeout_kolejki) {
                     sprintf(buf, "Klient [ID: %d]: Przekroczono czas oczekiwania %d sek, przechodzi do stacjonarnej.",
-                            klient->id, MAX_CZAS_KOLEJKI);
+                            klient->id, timeout_kolejki);
                     ZapiszLog(LOG_INFO, buf);
                     
                     //Faktyczne usuniecie z kolejki samoobslugowej
@@ -268,6 +269,9 @@ int main(int argc, char* argv[]) {
             if (id_kasy != -1 && idzie_do_samoobslugowej) {
                 //Zajmij kase
                 if (ZajmijKase(id_kasy, klient->id, stan_sklepu, sem_id) == 0) {
+                    //Usun siebie z kolejki samoobslugowej (bo zajmujemy kase)
+                    UsunKlientaZKolejkiSamoobslugowej(klient->id, stan_sklepu, sem_id);
+                    
                     klient->stan = STAN_PRZY_KASIE;
                     
                     //Obsluz klienta przy kasie samoobslugowej
@@ -285,6 +289,11 @@ int main(int argc, char* argv[]) {
                         moze_kupic = 0;
                         kod_bledu = 1;  //Niepelnoletni
                         ZwolnijKase(id_kasy, stan_sklepu, sem_id);
+                    } else if (wynik_obslugi == -3) {
+                        //Ewakuacja podczas obslugi
+                        moze_kupic = 0;
+                        kod_bledu = 3;  //Ewakuacja
+                        goto wyjscie;
                     } else {
                         //Sukces - zwolnij kase
                         ZwolnijKase(id_kasy, stan_sklepu, sem_id);
@@ -313,21 +322,32 @@ int main(int argc, char* argv[]) {
         ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
 
-        //KASA_ZAMYKANA nie jest dostepna, gdyz konczy obsluge
-        int kasa1_dostepna = (stan_kasy1 != KASA_ZAMYKANA);
-        int kasa2_dostepna = (stan_kasy2 != KASA_ZAMYKANA && stan_kasy2 != KASA_ZAMKNIETA);
+        //Kasa 2 jest glowna, Kasa 1 jest pomocnicz (KASA_ZAMYKANA nie przyjmuje nowych klientow)
+        int kasa1_otwarta = (stan_kasy1 != KASA_ZAMKNIETA && stan_kasy1 != KASA_ZAMYKANA);
+        int kasa2_otwarta = (stan_kasy2 != KASA_ZAMKNIETA && stan_kasy2 != KASA_ZAMYKANA);
+        int kasa2_pelna = (kolejka2 >= MAX_KOLEJKA_STACJONARNA);
         
-        int wybrana_kasa = -1;  //Brak wyboru
+        int wybrana_kasa = -1;
         
-        if (kasa2_dostepna) {
-            //Kasa 2 jest glowna - idz tam najpierw
-            if (kasa1_dostepna && kolejka1 < kolejka2) {
-                wybrana_kasa = 0;  //Kasa 1 ma krotsza kolejke
+        if (kasa2_otwarta && !kasa2_pelna) {
+            //Kasa 2 jest glowna i ma miejsce
+            if (kasa1_otwarta && kolejka1 < kolejka2) {
+                wybrana_kasa = 0;
             } else {
-                wybrana_kasa = 1;  //Kasa 2
+                wybrana_kasa = 1;
             }
-        } else if (kasa1_dostepna) {
-            wybrana_kasa = 0;  //Tylko kasa 1 dostepna
+        } else if (kasa1_otwarta) {
+            //Kasa 2 zamknieta lub pelna, Kasa 1 otwarta => ustaw sie do Kasy 1
+            wybrana_kasa = 0;
+        } else if (kasa2_otwarta && kasa2_pelna) {
+            //Kasa 2 otwarta ale pelna, Kasa 1 zamknieta => ustaw sie do Kasy 1
+            wybrana_kasa = 0;
+        } else if (kasa2_otwarta) {
+            //Kasa 2 otwarta, Kasa 1 zamknieta => ustaw sie do Kasy 2
+            wybrana_kasa = 1;
+        } else {
+            //Obie zamkniete - ustaw sie do Kasy 1
+            wybrana_kasa = 0;
         }
         
         //Sprawdz czy jakakolwiek kasa jest dostepna
