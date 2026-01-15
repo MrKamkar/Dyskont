@@ -232,8 +232,9 @@ int main(int argc, char* argv[]) {
     
     //Glowna petla kasjera
     while (1) {
-        if (CZY_KONCZYC(stan_sklepu)) {
-            ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Otrzymano sygnal ewakuacji, koncze prace.", id_kasy + 1);
+        //Reaguj TYLKO na SIGTERM, nie na flaga_ewakuacji
+        if (g_sygnal_wyjscia) {
+            ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Otrzymano SIGTERM - koncze prace.", id_kasy + 1);
             break;
         }
         

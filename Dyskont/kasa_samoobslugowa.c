@@ -4,10 +4,7 @@
 #include <string.h>
 #include <signal.h>
 
-//Pusty handler SIGALRM
-void ObslugaSigAlarmKasaSamo(int sig) {
-    (void)sig;
-}
+
 
 //Dodaje klienta do wspolnej kolejki samoobslugowej
 int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
@@ -259,7 +256,6 @@ int main(int argc, char* argv[]) {
     }
     
     signal(SIGTERM, ObslugaSygnaluWyjscia);
-    signal(SIGALRM, ObslugaSigAlarmKasaSamo);
     
     srand(time(NULL) ^ getpid());
     
@@ -267,8 +263,9 @@ int main(int argc, char* argv[]) {
     
     //Glowna petla - proces monitorujacy, uzywa semtimedop z timeoutem
     while (1) {
-        if (CZY_KONCZYC(stan_sklepu)) {
-            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Ewakuacja - koncze prace.", id_kasy + 1);
+        //Reaguj TYLKO na SIGTERM, nie na flaga_ewakuacji
+        if (g_sygnal_wyjscia) {
+            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Otrzymano SIGTERM - koncze prace.", id_kasy + 1);
             break;
         }
         
@@ -282,10 +279,8 @@ int main(int argc, char* argv[]) {
             AktualizujLiczbeKas(stan_sklepu, sem_id);
         }
         
-        //Oczekiwanie z timeoutem 2s (alarm + pause)
-        alarm(2);
-        pause();
-        alarm(0);  //Wylacz alarm
+        //Oczekiwanie na sygnal przez semafor IPC (zamiast pause+alarm)
+        CzekajNaSygnal(sem_id);
     }
     
     OdlaczPamiecWspoldzielona(stan_sklepu);

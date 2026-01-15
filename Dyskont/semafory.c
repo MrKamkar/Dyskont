@@ -10,18 +10,28 @@ static key_t GenerujKlucz() {
     return klucz;
 }
 
-//Wykonanie operacji na semaforze
+//Operacja na semaforze z timeoutem
 static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
-    //SEM_UNDO powoduje desynchronizacje semaforow zliczajacych wiec trzeba dac 0
     struct sembuf operacja = { sem_num, wartosc, 0 };
+    struct timespec timeout = {5, 0};
     
-    if (semop(sem_id, &operacja, 1) == -1) {
+    //Ponawiaj przy EINTR (sygnal przerwal operacje)
+    while (1) {
+        if (semtimedop(sem_id, &operacja, 1, &timeout) == 0) {
+            return 0;  //Sukces
+        }
+        
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN) {
+            return -1;
+        }
         if (errno != EINVAL && errno != EIDRM) {
             perror(blad_msg);
         }
         return -1;
     }
-    return 0;
 }
 
 //Inicjalizacja zestawu semaforow
@@ -59,6 +69,7 @@ int InicjalizujSemafory() {
     wartosci[SEM_ODBLOKUJ_KASA_SAMO_5] = 0;
     wartosci[SEM_OTWORZ_KASA_STACJ_1] = 0;
     wartosci[SEM_OTWORZ_KASA_STACJ_2] = 0;
+    wartosci[SEM_CZEKAJ_SYGNAL] = 0;
     
     arg.array = wartosci;
     

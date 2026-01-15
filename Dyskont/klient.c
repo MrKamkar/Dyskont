@@ -370,10 +370,7 @@ int main(int argc, char* argv[]) {
 wyjscie:
     klient->stan = STAN_WYJSCIE;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    stan_sklepu->liczba_klientow_w_sklepie--;
-    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-
+    //Najpierw zaloguj wyjscie (przed operacja na semaforze)
     if (moze_kupic) {
         ZapiszLogF(LOG_INFO, "Klient [ID: %d] opuscil sklep po dokonaniu zakupow.", klient->id);
     } else {
@@ -386,6 +383,11 @@ wyjscie:
         }
         ZapiszLogF(LOG_BLAD, "Klient [ID: %d] opuscil sklep BEZ zakupow (powod: %s).", klient->id, powod);
     }
+    
+    //Zmniejsz licznik klientow (moze sie nie udac jesli semafory usuniete)
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    stan_sklepu->liczba_klientow_w_sklepie--;
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 
     UsunKlienta(klient);
     OdlaczPamiecWspoldzielona(stan_sklepu);

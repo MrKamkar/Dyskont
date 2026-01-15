@@ -10,6 +10,7 @@
 #include "semafory.h"
 #include "pracownik_obslugi.h"
 #include "kasjer.h"
+#include "wspolne.h"
 
 //Globalne zmienne dla czyszczenia zasobow
 static StanSklepu* g_stan_sklepu = NULL;
@@ -19,12 +20,6 @@ static char g_sciezka[256];
 //Globalne zmienne dla obslugi SIGCHLD
 static volatile sig_atomic_t g_aktywnych_klientow = 0;
 static volatile sig_atomic_t g_calkowita_liczba_klientow = 0;
-
-//Pusty handler SIGALRM do wybudzania pause()
-void ObslugaSIGALRM(int sig) {
-    (void)sig;
-    //Tylko wybudza pause()
-}
 
 //Handler SIGCHLD - zbiera zakonczone procesy
 void ObslugaSIGCHLD(int sig) {
@@ -303,9 +298,6 @@ int main(int argc, char* argv[]) {
     
     ZapiszLog(LOG_INFO, "Rozpoczynam ciagla symulacje klientow...");
     
-    //Ustawienie alarmu (zegar symulacji)
-    alarm(1);
-    signal(SIGALRM, ObslugaSIGALRM);
     
     //Glowna petla symulacji
     while (time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji) {
@@ -347,29 +339,41 @@ int main(int argc, char* argv[]) {
                 teraz - czas_startu, CZAS_SYMULACJI_SEK, (int)g_aktywnych_klientow, id_klienta);
         ZapiszLog(LOG_INFO, buf);
         
-        //Oczekiwanie na sygnal
-        alarm(1);
-        pause();
+        CzekajNaSygnal(g_sem_id);
     }
     
-    alarm(0);  //Wylacz alarm
+    //NAJPIERW ustaw flage ewakuacji - klienci sprawdza ja i wyjda
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    g_stan_sklepu->flaga_ewakuacji = 1;
+    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
-    sprintf(buf, "Koniec symulacji. Czekam na %d pozostalych klientow...", (int)g_aktywnych_klientow);
+    sprintf(buf, "Koniec symulacji - ewakuacja. Czekam na %d klientow...", (int)g_aktywnych_klientow);
     ZapiszLog(LOG_INFO, buf);
     
-    //Oczekiwanie na zakonczenie pozostalych procesow klienckich (z timeoutem)
+    //Czekaj na klientow - maja teraz flage ewakuacji
     time_t czas_oczekiwania_start = time(NULL);
-    int timeout_klientow = 10;  //Maksymalna ilosc sekund na zakonczenie klientow
+    int timeout_klientow = 30;
     
     while (g_aktywnych_klientow > 0 && (time(NULL) - czas_oczekiwania_start) < timeout_klientow) {
-        alarm(1);  //Przerwij pause() po 1 sek
-        pause();   //Czeka na SIGCHLD lub SIGALRM
+        CzekajNaSygnal(g_sem_id);
     }
-    alarm(0);
     
     if (g_aktywnych_klientow > 0) {
-        sprintf(buf, "Timeout! Pozostalo %d klientow, kontynuuje zamykanie.", (int)g_aktywnych_klientow);
+        sprintf(buf, "Timeout! Pozostalo %d klientow, wysylam sygnal ewakuacji.", (int)g_aktywnych_klientow);
         ZapiszLog(LOG_OSTRZEZENIE, buf);
+        ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        g_stan_sklepu->flaga_ewakuacji = 1;
+        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        int do_wybudzenia = (int)g_aktywnych_klientow;
+        for (int i = 0; i < do_wybudzenia; i++) {
+            ZwolnijSemafor(g_sem_id, SEM_CZEKAJ_SYGNAL);
+            ZwolnijSemafor(g_sem_id, SEM_WOLNE_KASY_SAMO);
+        }
+        ZapiszLog(LOG_INFO, "Czekam 5s na zakonczenie klientow po ewakuacji...");
+        time_t start_ewak = time(NULL);
+        while (g_aktywnych_klientow > 0 && (time(NULL) - start_ewak) < 5) {
+            CzekajNaSygnal(g_sem_id);
+        }
     }
     
     sprintf(buf, "Symulacja zakonczona. Laczna liczba klientow pomyslnie: %d", (int)g_calkowita_liczba_klientow);
@@ -392,24 +396,57 @@ int main(int argc, char* argv[]) {
     
     int status;
     
-    //Oczekiwanie na zakonczenie procesow kasjerow
-    //Po wyslaniu SIGTERM procesy powinny zakonczyc sie szybko
-    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
-        waitpid(pid_kasjerow[i], &status, 0);
-        sprintf(buf, "Proces kasjera [Kasa: %d] zakonczony.", i + 1);
-        ZapiszLog(LOG_INFO, buf);
+    //Oczekiwanie na zakonczenie procesow pomocniczych
+    time_t start_cleanup = time(NULL);
+    int cleanup_timeout = 15;
+    int procesy_pozostale = LICZBA_KAS_STACJONARNYCH + LICZBA_KAS_SAMOOBSLUGOWYCH + 1;
+    
+    while (procesy_pozostale > 0 && (time(NULL) - start_cleanup) < cleanup_timeout) {
+        //Sprawdz kasjerow
+        for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
+            if (pid_kasjerow[i] > 0) {
+                pid_t wynik = waitpid(pid_kasjerow[i], &status, WNOHANG);
+                if (wynik > 0) {
+                    sprintf(buf, "Proces kasjera [Kasa: %d] zakonczony.", i + 1);
+                    ZapiszLog(LOG_INFO, buf);
+                    pid_kasjerow[i] = -1;
+                    procesy_pozostale--;
+                }
+            }
+        }
+        
+        //Sprawdz kasy samoobslugowe
+        for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
+            if (pid_kas_samo[i] > 0) {
+                pid_t wynik = waitpid(pid_kas_samo[i], &status, WNOHANG);
+                if (wynik > 0) {
+                    sprintf(buf, "Proces kasy samoobslugowej [Kasa: %d] zakonczony.", i + 1);
+                    ZapiszLog(LOG_INFO, buf);
+                    pid_kas_samo[i] = -1;
+                    procesy_pozostale--;
+                }
+            }
+        }
+        
+        //Sprawdz pracownika
+        if (pid_pracownik > 0) {
+            pid_t wynik = waitpid(pid_pracownik, &status, WNOHANG);
+            if (wynik > 0) {
+                ZapiszLog(LOG_INFO, "Proces pracownika obslugi zakonczony.");
+                pid_pracownik = -1;
+                procesy_pozostale--;
+            }
+        }
+        
+        if (procesy_pozostale > 0) {
+            CzekajNaSygnal(g_sem_id);
+        }
     }
     
-    //Oczekiwanie na zakonczenie procesow kas samoobslugowych
-    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-        waitpid(pid_kas_samo[i], &status, 0);
-        sprintf(buf, "Proces kasy samoobslugowej [Kasa: %d] zakonczony.", i + 1);
-        ZapiszLog(LOG_INFO, buf);
+    if (procesy_pozostale > 0) {
+        sprintf(buf, "Timeout cleanup! Pozostalo %d procesow, kontynuuje.", procesy_pozostale);
+        ZapiszLog(LOG_OSTRZEZENIE, buf);
     }
-    
-    //Oczekiwanie na zakonczenie procesu pracownika obslugi
-    waitpid(pid_pracownik, &status, 0);
-    ZapiszLog(LOG_INFO, "Proces pracownika obslugi zakonczony.");
     
     ZapiszLog(LOG_INFO, "Koniec symulacji.");
     

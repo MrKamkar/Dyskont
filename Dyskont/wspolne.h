@@ -29,4 +29,9 @@ int UsunZKolejki(int* kolejka, int* liczba, int wartosc_do_usuniecia);
 //Zwraca 0 = semafor zajety, -1 = timeout lub blad
 int CzekajNaSemafor(int sem_id, int sem_num, int sek_timeout);
 
+//Blokujace czekanie na semafor az do przerwania przez sygnal (np. SIGCHLD)
+//Zamiast pause() + alarm() - czyste IPC
+//Zwraca 0 gdy sygnal przerwał, -1 przy bledzie
+int CzekajNaSygnal(int sem_id);
+
 #endif

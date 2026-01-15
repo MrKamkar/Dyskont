@@ -56,7 +56,20 @@ int CzekajNaSemafor(int sem_id, int sem_num, int sek_timeout) {
     struct sembuf op = {sem_num, -1, 0};
     
     if (semtimedop(sem_id, &op, 1, &timeout) == 0) {
-        return 0;  //Sukces
+        return 0;
     }
-    return -1;  //Timeout lub blad
+    return -1;
+}
+
+//Blokujace czekanie z timeoutem 1s
+int CzekajNaSygnal(int sem_id) {
+    struct timespec timeout = {1, 0};
+    struct sembuf op = {SEM_CZEKAJ_SYGNAL, -1, 0};
+    
+    int wynik = semtimedop(sem_id, &op, 1, &timeout);
+    
+    if (wynik == 0) {
+        ZwolnijSemafor(sem_id, SEM_CZEKAJ_SYGNAL);
+    }
+    return 0;
 }

@@ -100,8 +100,9 @@ int main() {
     
     //Glowna petla pracownika
     while (1) {
-        if (CZY_KONCZYC(stan_sklepu)) {
-            ZapiszLog(LOG_INFO, "Pracownik obslugi: Ewakuacja - koncze prace.");
+        //Reaguj TYLKO na SIGTERM, nie na flaga_ewakuacji
+        if (g_sygnal_wyjscia) {
+            ZapiszLog(LOG_INFO, "Pracownik obslugi: Otrzymano SIGTERM - koncze prace.");
             break;
         }
         

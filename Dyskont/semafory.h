@@ -29,8 +29,9 @@
 #define SEM_ODBLOKUJ_KASA_SAMO_5   12  //Sygnal odblokowania kasy samoobslugowej 5
 #define SEM_OTWORZ_KASA_STACJ_1    13  //Sygnal otwarcia kasy stacjonarnej 1
 #define SEM_OTWORZ_KASA_STACJ_2    14  //Sygnal otwarcia kasy stacjonarnej 2
+#define SEM_CZEKAJ_SYGNAL          15  //Semafor do blokujacego czekania (zamiast pause+alarm)
 
-#define SEM_LICZBA               15  //Calkowita liczba semaforow
+#define SEM_LICZBA               16  //Calkowita liczba semaforow
 
 //Makra mapujace ID kasy na odpowiedni mutex/semafor
 #define MUTEX_KASY(id) ((id) == 0 ? MUTEX_KASA_STACJONARNA_1 : MUTEX_KASA_STACJONARNA_2)
