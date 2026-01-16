@@ -85,7 +85,11 @@ int main() {
         return 1;
     }
     
-    signal(SIGTERM, ObslugaSygnaluWyjscia);
+    struct sigaction sa;
+    sa.sa_handler = ObslugaSygnaluWyjscia;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGTERM, &sa, NULL);
     
     ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na FIFO...");
     
@@ -129,11 +133,12 @@ int main() {
                         SYMULACJA_USLEEP(stan_sklepu, 500000); //500ms
                         
                         //Odblokowanie kasy w pamieci wspoldzielonej
-                        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                        if (stan_sklepu->kasy_samo[zadanie.id_kasy].stan == KASA_ZABLOKOWANA) {
-                            stan_sklepu->kasy_samo[zadanie.id_kasy].stan = KASA_ZAJETA;
+                        if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != -2) {
+                            if (stan_sklepu->kasy_samo[zadanie.id_kasy].stan == KASA_ZABLOKOWANA) {
+                                stan_sklepu->kasy_samo[zadanie.id_kasy].stan = KASA_ZAJETA;
+                            }
+                            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                         }
-                        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                         
                         //Sygnal odblokowania - budzi czekajacego klienta
                         ZwolnijSemafor(sem_id, SEM_ODBLOKUJ_KASA_SAMO(zadanie.id_kasy));

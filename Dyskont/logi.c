@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <signal.h>
 
 static int id_kolejki = -1;
 static pthread_t watek_loggera;
@@ -12,6 +13,11 @@ static int watek_uruchomiony = 0;
 //Petla watku logujacego
 static void* PetlaLoggera(void* arg) {
     (void)arg;
+
+    //Zablokuj wszystkie sygnaly w watku loggera (zeby Main je obslugiwal)
+    sigset_t set;
+    sigfillset(&set);
+    pthread_sigmask(SIG_BLOCK, &set, NULL);
     
     mkdir("logs", 0300);
     
@@ -125,15 +131,17 @@ void UruchomWatekLogujacy() {
 }
 
 void ZamknijSystemLogowania() {
-    //Wyslanie komunikatu o zakonczeniu
-    struct KomunikatLog msg;
-    msg.typ_komunikatu = TYP_KONIEC;
-    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0);
-
-    //Czekanie na zakonczenie watku loggera
+    //Zamiast wysylac komunikat (co moze blokowac gdy kolejka pelna), anulujemy watek
+    
+    //Czekanie na zakonczenie watku loggera (tylko jesli to nie logger wola te funkcje)
     if (watek_uruchomiony) {
-        if (pthread_join(watek_loggera, NULL) != 0) {
-            perror("Blad pthread_join");
+        if (!pthread_equal(pthread_self(), watek_loggera)) {
+            //Wymus zakonczenie (cancellation)
+            pthread_cancel(watek_loggera);
+            
+            if (pthread_join(watek_loggera, NULL) != 0) {
+                perror("Blad pthread_join");
+            }
         }
     }
 

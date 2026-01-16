@@ -18,5 +18,61 @@
     <ClCompile Include="main.c">
       <Filter>Pliki źródłowe</Filter>
     </ClCompile>
+    <ClCompile Include="kasa_samoobslugowa.c">
+      <Filter>Pliki źródłowe</Filter>
+    </ClCompile>
+    <ClCompile Include="kasjer.c">
+      <Filter>Pliki źródłowe</Filter>
+    </ClCompile>
+    <ClCompile Include="kierownik.c">
+      <Filter>Pliki źródłowe</Filter>
+    </ClCompile>
+    <ClCompile Include="klient.c">
+      <Filter>Pliki źródłowe</Filter>
+    </ClCompile>
+    <ClCompile Include="logi.c">
+      <Filter>Pliki źródłowe</Filter>
+    </ClCompile>
+    <ClCompile Include="pamiec_wspoldzielona.c">
+      <Filter>Pliki źródłowe</Filter>
+    </ClCompile>
+    <ClCompile Include="pracownik_obslugi.c">
+      <Filter>Pliki źródłowe</Filter>
+    </ClCompile>
+    <ClCompile Include="semafory.c">
+      <Filter>Pliki źródłowe</Filter>
+    </ClCompile>
+    <ClCompile Include="wspolne.c">
+      <Filter>Pliki źródłowe</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="kasa_samoobslugowa.h">
+      <Filter>Pliki zasobów</Filter>
+    </ClInclude>
+    <ClInclude Include="kasjer.h">
+      <Filter>Pliki zasobów</Filter>
+    </ClInclude>
+    <ClInclude Include="kierownik.h">
+      <Filter>Pliki zasobów</Filter>
+    </ClInclude>
+    <ClInclude Include="klient.h">
+      <Filter>Pliki zasobów</Filter>
+    </ClInclude>
+    <ClInclude Include="logi.h">
+      <Filter>Pliki zasobów</Filter>
+    </ClInclude>
+    <ClInclude Include="pamiec_wspoldzielona.h">
+      <Filter>Pliki zasobów</Filter>
+    </ClInclude>
+    <ClInclude Include="pracownik_obslugi.h">
+      <Filter>Pliki zasobów</Filter>
+    </ClInclude>
+    <ClInclude Include="semafory.h">
+      <Filter>Pliki zasobów</Filter>
+    </ClInclude>
+    <ClInclude Include="wspolne.h">
+      <Filter>Pliki zasobów</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

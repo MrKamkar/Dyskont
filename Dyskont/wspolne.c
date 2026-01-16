@@ -20,6 +20,9 @@ int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_
         return -1;
     }
     
+    //Ustawienie pamieci dla semaforow (sprawdzanie flagi ewakuacji)
+    UstawPamiecDlaSemaforow(*stan);
+    
     //Dolaczenie do semaforow
     *sem_id = DolaczSemafory();
     if (*sem_id == -1) {

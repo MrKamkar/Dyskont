@@ -1,6 +1,14 @@
 #include "semafory.h"
 #include "pamiec_wspoldzielona.h"
 
+//Globalny wskaznik do pamieci wspoldzielonej dla sprawdzania ewakuacji
+static StanSklepu* g_stan_ewakuacji = NULL;
+
+//Ustawia wskaznik pamieci wspoldzielonej dla sprawdzania ewakuacji
+void UstawPamiecDlaSemaforow(StanSklepu* stan) {
+    g_stan_ewakuacji = stan;
+}
+
 //Generowanie klucza dla semaforow
 static key_t GenerujKlucz() {
     key_t klucz = ftok(IPC_SCIEZKA, 'M');
@@ -10,23 +18,27 @@ static key_t GenerujKlucz() {
     return klucz;
 }
 
-//Operacja na semaforze z timeoutem
+//Operacja na semaforze - blokujaca z mozliwoscia przerwania przy ewakuacji
 static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
     struct sembuf operacja = { sem_num, wartosc, 0 };
-    struct timespec timeout = {5, 0};
+    struct timespec timeout = {1, 0};  //1s timeout dla sprawdzania ewakuacji
     
-    //Ponawiaj przy EINTR (sygnal przerwal operacje)
     while (1) {
+        //Sprawdz flage ewakuacji z pamieci wspoldzielonej
+        if (g_stan_ewakuacji && g_stan_ewakuacji->flaga_ewakuacji) {
+            return -2;
+        }
+        
         if (semtimedop(sem_id, &operacja, 1, &timeout) == 0) {
             return 0;  //Sukces
         }
         
-        if (errno == EINTR) {
+        //EINTR (sygnal) lub EAGAIN (timeout) - powtorz
+        if (errno == EINTR || errno == EAGAIN) {
             continue;
         }
-        if (errno == EAGAIN) {
-            return -1;
-        }
+        
+        //Inny blad
         if (errno != EINVAL && errno != EIDRM) {
             perror(blad_msg);
         }

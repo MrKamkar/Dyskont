@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <fcntl.h>
 #include "logi.h"
 #include "klient.h"
 #include "pamiec_wspoldzielona.h"
@@ -18,19 +19,37 @@ static int g_sem_id = -1;
 static char g_sciezka[256];
 
 //Globalne zmienne dla obslugi SIGCHLD
-static volatile sig_atomic_t g_aktywnych_klientow = 0;
+static int g_aktywnych_klientow = 0; // Teraz zwykly int, modyfikowany tylko w main
 static volatile sig_atomic_t g_calkowita_liczba_klientow = 0;
 
-//Handler SIGCHLD - zbiera zakonczone procesy
+//Globalne zmienne dla mechanizmu Self-Pipe (IPC)
+static int g_pipe_fd[2]; // [0] - odczyt (main), [1] - zapis (handler)
+
+//Handler SIGCHLD - zbiera zakonczone procesy i powiadamia main przez PIPE
 void ObslugaSIGCHLD(int sig) {
     (void)sig;
-    //Zbierz wszystkie zakonczone dzieci bez blokowania
     int status;
+    int saved_errno = errno;
+    
+    //Zbierz wszystkie zakonczone dzieci bez blokowania
     while (waitpid(-1, &status, WNOHANG) > 0) {
-        g_aktywnych_klientow--;
+        //Zamiast modyfikowac licznik, wyslij bajt do potoku (IPC)
+        char dummy = 'x';
+        write(g_pipe_fd[1], &dummy, 1);
+        
         if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
             g_calkowita_liczba_klientow++;
         }
+    }
+    errno = saved_errno;
+}
+
+//Funkcja pomocnicza do aktualizacji licznika na podstawie danych z potoku
+void AktualizujLicznikKlientow() {
+    char buf[128];
+    ssize_t bytes_read;
+    while ((bytes_read = read(g_pipe_fd[0], buf, sizeof(buf))) > 0) {
+        g_aktywnych_klientow -= bytes_read;
     }
 }
 
@@ -95,6 +114,9 @@ void ObslugaSIGINT(int sig) {
     (void)sig;
     ZapiszLog(LOG_INFO, "Otrzymano SIGINT - rozpoczynam zamykanie systemu..");
     
+    //Wyslij SIGKILL do wszystkich procesow (obudz spiochow i wymus koniec)
+    kill(0, SIGKILL);
+    
     //Zamkniecie systemu logowania
     ZamknijSystemLogowania();
     
@@ -115,6 +137,15 @@ void ObslugaSIGINT(int sig) {
 
 int main(int argc, char* argv[]) {
     srand(time(NULL));
+
+    //Inicjalizacja potoku (IPC) dla Self-Pipe Trick
+    if (pipe(g_pipe_fd) == -1) {
+        perror("Blad pipe");
+        return 1;
+    }
+    //Ustawienie odczytu na non-blocking
+    int flags = fcntl(g_pipe_fd[0], F_GETFL, 0);
+    fcntl(g_pipe_fd[0], F_SETFL, flags | O_NONBLOCK);
     
     //Pobranie czasu symulacji i opcjonalnych argumentow
     if (argc < 2) {
@@ -175,6 +206,9 @@ int main(int argc, char* argv[]) {
     //Inicjalizacja pamieci wspoldzielonej
     ZapiszLog(LOG_INFO, "Inicjalizacja pamieci wspoldzielonej..");
     g_stan_sklepu = InicjalizujPamiecWspoldzielona();
+    
+    //Ustawienie pamieci dla semaforow (sprawdzanie flagi ewakuacji)
+    UstawPamiecDlaSemaforow(g_stan_sklepu);
     
     //Zapisz PID glownego procesu, tryb testu i max klientow do pamieci wspoldzielonej
     g_stan_sklepu->pid_glowny = getpid();
@@ -325,13 +359,20 @@ int main(int argc, char* argv[]) {
             }
             else {
                 //Proces rodzica
-                g_aktywnych_klientow++;
+                //Aktualizuj licznik przed zwiekszeniem (odczytaj z potoku)
+                AktualizujLicznikKlientow();
+                
+                g_aktywnych_klientow++; // Zwykle ++, bo jestesmy w main (synchronizacja przez pipe)
+
                 id_klienta++;
                 
                 //Krotka przerwa miedzy tworzeniem procesow (pomijana w trybie testu)
                 SYMULACJA_USLEEP(g_stan_sklepu, PRZERWA_MIEDZY_KLIENTAMI_MS * 1000);
             }
         }
+        
+        //Regularna aktualizacja licznika z potoku
+        AktualizujLicznikKlientow();
         
         //Wyswietlanie statusu co 1 sekunde
         time_t teraz = time(NULL);
@@ -347,6 +388,11 @@ int main(int argc, char* argv[]) {
     g_stan_sklepu->flaga_ewakuacji = 1;
     ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
+    //Wyslij SIGTERM do wszystkich procesow potomnych w grupie
+    signal(SIGTERM, SIG_IGN);  //Glowny proces ignoruje SIGTERM
+    kill(0, SIGTERM);          //Wyslij do calej grupy procesow
+    signal(SIGTERM, ObslugaSIGTERM);  //Przywroc handler
+    
     sprintf(buf, "Koniec symulacji - ewakuacja. Czekam na %d klientow...", (int)g_aktywnych_klientow);
     ZapiszLog(LOG_INFO, buf);
     
@@ -355,20 +401,19 @@ int main(int argc, char* argv[]) {
     int timeout_klientow = 30;
     
     while (g_aktywnych_klientow > 0 && (time(NULL) - czas_oczekiwania_start) < timeout_klientow) {
+        AktualizujLicznikKlientow(); //Wazne: czytaj z potoku w petli cleanup!
         CzekajNaSygnal(g_sem_id);
     }
     
     if (g_aktywnych_klientow > 0) {
-        sprintf(buf, "Timeout! Pozostalo %d klientow, wysylam sygnal ewakuacji.", (int)g_aktywnych_klientow);
+        sprintf(buf, "Timeout! Pozostalo %d klientow, wymuszam ewakuacje.", (int)g_aktywnych_klientow);
         ZapiszLog(LOG_OSTRZEZENIE, buf);
-        ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        g_stan_sklepu->flaga_ewakuacji = 1;
-        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        int do_wybudzenia = (int)g_aktywnych_klientow;
-        for (int i = 0; i < do_wybudzenia; i++) {
-            ZwolnijSemafor(g_sem_id, SEM_CZEKAJ_SYGNAL);
-            ZwolnijSemafor(g_sem_id, SEM_WOLNE_KASY_SAMO);
-        }
+        
+        //Ponownie wyslij SIGTERM do wszystkich procesow potomnych
+        signal(SIGTERM, SIG_IGN);
+        kill(0, SIGTERM);
+        signal(SIGTERM, ObslugaSIGTERM);
+        
         ZapiszLog(LOG_INFO, "Czekam 5s na zakonczenie klientow po ewakuacji...");
         time_t start_ewak = time(NULL);
         while (g_aktywnych_klientow > 0 && (time(NULL) - start_ewak) < 5) {
@@ -406,7 +451,7 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
             if (pid_kasjerow[i] > 0) {
                 pid_t wynik = waitpid(pid_kasjerow[i], &status, WNOHANG);
-                if (wynik > 0) {
+                if (wynik > 0 || (wynik == -1 && errno == ECHILD)) {
                     sprintf(buf, "Proces kasjera [Kasa: %d] zakonczony.", i + 1);
                     ZapiszLog(LOG_INFO, buf);
                     pid_kasjerow[i] = -1;
@@ -419,7 +464,7 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
             if (pid_kas_samo[i] > 0) {
                 pid_t wynik = waitpid(pid_kas_samo[i], &status, WNOHANG);
-                if (wynik > 0) {
+                if (wynik > 0 || (wynik == -1 && errno == ECHILD)) {
                     sprintf(buf, "Proces kasy samoobslugowej [Kasa: %d] zakonczony.", i + 1);
                     ZapiszLog(LOG_INFO, buf);
                     pid_kas_samo[i] = -1;
@@ -431,7 +476,7 @@ int main(int argc, char* argv[]) {
         //Sprawdz pracownika
         if (pid_pracownik > 0) {
             pid_t wynik = waitpid(pid_pracownik, &status, WNOHANG);
-            if (wynik > 0) {
+            if (wynik > 0 || (wynik == -1 && errno == ECHILD)) {
                 ZapiszLog(LOG_INFO, "Proces pracownika obslugi zakonczony.");
                 pid_pracownik = -1;
                 procesy_pozostale--;
@@ -456,6 +501,10 @@ int main(int argc, char* argv[]) {
     OdlaczPamiecWspoldzielona(g_stan_sklepu);
     UsunPamiecWspoldzielona();
     UsunSemafory(g_sem_id);
+    
+    //Zamknij potok IPC
+    close(g_pipe_fd[0]);
+    close(g_pipe_fd[1]);
     
     ZamknijSystemLogowania();
     

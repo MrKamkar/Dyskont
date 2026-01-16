@@ -10,7 +10,7 @@
 int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
     if (!stan) return -1;
     
-    ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
+    if (ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO) == -2) return -1;
     
     int wynik = -1;
     if (stan->liczba_w_kolejce_samo < MAX_KOLEJKA_SAMO) {
@@ -27,7 +27,7 @@ int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
 int UsunKlientaZKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
     if (!stan) return -1;
     
-    ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
+    if (ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO) == -2) return -1;
     
     //Szukaj klienta i usun z kolejki
     int znaleziono = UsunZKolejki(stan->kolejka_samo, &stan->liczba_w_kolejce_samo, id_klienta);
@@ -40,7 +40,7 @@ int UsunKlientaZKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_
 int ZnajdzWolnaKase(StanSklepu* stan, int sem_id) {
     if (!stan) return -1;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) return -1;
     
     int wolna_kasa = -1;
     for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
@@ -58,7 +58,7 @@ int ZnajdzWolnaKase(StanSklepu* stan, int sem_id) {
 int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
     if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) return -1;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) return -1;
     
     int wynik = -1;
     if (stan->kasy_samo[id_kasy].stan == KASA_WOLNA) {
@@ -76,7 +76,7 @@ int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
 void ZwolnijKase(int id_kasy, StanSklepu* stan, int sem_id) {
     if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) return;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) return;
     stan->kasy_samo[id_kasy].stan = KASA_WOLNA;
     stan->kasy_samo[id_kasy].id_klienta = -1;
     stan->kasy_samo[id_kasy].czas_rozpoczecia = 0;
@@ -98,7 +98,7 @@ int ObliczWymaganaLiczbeKas(int liczba_klientow) {
 void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) return;
     
     int liczba_klientow = stan->liczba_klientow_w_sklepie;
     int wymagane = ObliczWymaganaLiczbeKas(liczba_klientow);
@@ -153,7 +153,7 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
             ZapiszLogF(LOG_OSTRZEZENIE, "Kasa samoobslugowa [%d]: BLOKADA! Niezgodnosc wagi produktu.",
                     id_kasy + 1);
             
-            ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+            if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) return -3;
             stan->kasy_samo[id_kasy].stan = KASA_ZABLOKOWANA;
             ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             
@@ -171,7 +171,7 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
             int pozostaly_czas = (stan->tryb_testu == 1) ? 2 : MAX_CZAS_OCZEKIWANIA;
             
             while (pozostaly_czas > 0) {
-                //Sprawdz flage ewakuacji
+                //Sprawdz ewakuacje
                 if (stan->flaga_ewakuacji) {
                     ZwolnijKase(id_kasy, stan, sem_id);
                     return -3;  //Ewakuacja
@@ -255,7 +255,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    signal(SIGTERM, ObslugaSygnaluWyjscia);
+    struct sigaction sa;
+    sa.sa_handler = ObslugaSygnaluWyjscia;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGTERM, &sa, NULL);
     
     srand(time(NULL) ^ getpid());
     
@@ -270,7 +274,7 @@ int main(int argc, char* argv[]) {
         }
         
         //Sprawdzenie stanu kasy
-        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) break;
         StanKasy stan_kasy = stan_sklepu->kasy_samo[id_kasy].stan;
         ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         

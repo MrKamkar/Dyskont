@@ -50,7 +50,7 @@ typedef struct {
 #define KLIENCI_NA_KASE 5  //Parametr K z opisu
 #define MAX_CZAS_OCZEKIWANIA 30 //T w sekundach
 #define MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE 1000  //Domyslna wartosc
-#define PRZERWA_MIEDZY_KLIENTAMI_MS 500 //Przerwa miedzy klientami w ms
+#define PRZERWA_MIEDZY_KLIENTAMI_MS 10 //Przerwa miedzy klientami w ms
 
 //Makro do symulacyjnych usleep - pomija sleep gdy tryb_testu == 1
 #define SYMULACJA_USLEEP(stan, us) do { if ((stan)->tryb_testu == 0) usleep(us); } while(0)

@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <assert.h>
+#include "pamiec_wspoldzielona.h"
 
 //Indeksy semaforów w tablicy - MUTEXY BINARNE (wzajemne wykluczanie)
 #define MUTEX_PAMIEC_WSPOLDZIELONA 0  //Mutex chroniacy pamiec wspoldzielona
@@ -64,5 +65,8 @@ int ZwolnijSemafor(int sem_id, int sem_num);
 
 //Usuwa semafory z systemu.
 int UsunSemafory(int sem_id);
+
+//Ustawia wskaznik pamieci wspoldzielonej dla sprawdzania ewakuacji
+void UstawPamiecDlaSemaforow(StanSklepu* stan);
 
 #endif
