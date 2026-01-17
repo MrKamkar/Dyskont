@@ -1,5 +1,6 @@
 #include "semafory.h"
 #include "pamiec_wspoldzielona.h"
+#include "wspolne.h"
 
 //Globalny wskaznik do pamieci wspoldzielonej dla sprawdzania ewakuacji
 static StanSklepu* g_stan_ewakuacji = NULL;
@@ -21,25 +22,24 @@ static key_t GenerujKlucz() {
 //Operacja na semaforze - blokujaca z mozliwoscia przerwania przy ewakuacji
 static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
     struct sembuf operacja = { sem_num, wartosc, 0 };
-    struct timespec timeout = {1, 0};  //1s timeout dla sprawdzania ewakuacji
     
     while (1) {
-        //Sprawdz flage ewakuacji z pamieci wspoldzielonej
-        if (g_stan_ewakuacji && g_stan_ewakuacji->flaga_ewakuacji) {
+        if (g_stan_ewakuacji && CZY_KONCZYC(g_stan_ewakuacji)) {
             return -2;
         }
         
-        if (semtimedop(sem_id, &operacja, 1, &timeout) == 0) {
+        
+        if (semop(sem_id, &operacja, 1) == 0) {
             return 0;  //Sukces
         }
         
-        //EINTR (sygnal) lub EAGAIN (timeout) - powtorz
-        if (errno == EINTR || errno == EAGAIN) {
+        //EINTR - przerwanie przez sygnal
+        if (errno == EINTR) {
             continue;
         }
         
         //Inny blad
-        if (errno != EINVAL && errno != EIDRM) {
+        if (errno != EINVAL && errno != EIDRM && errno != EINTR) {
             perror(blad_msg);
         }
         return -1;
@@ -68,17 +68,10 @@ int InicjalizujSemafory() {
     wartosci[MUTEX_KASA_STACJONARNA_2] = 1;
     
     //Semafory zliczajace
-    wartosci[SEM_WOLNE_KASY_SAMO] = 3;     //3 kasy otwarte na start (MIN_KAS_SAMO_CZYNNYCH)
     wartosci[SEM_KLIENCI_KOLEJKA_1] = 0;   //Brak klientow na start
     wartosci[SEM_KLIENCI_KOLEJKA_2] = 0;   //Brak klientow na start
     
     //Semafory sygnalizacyjne (wartosc 0 = brak sygnalu)
-    wartosci[SEM_ODBLOKUJ_KASA_SAMO_0] = 0;
-    wartosci[SEM_ODBLOKUJ_KASA_SAMO_1] = 0;
-    wartosci[SEM_ODBLOKUJ_KASA_SAMO_2] = 0;
-    wartosci[SEM_ODBLOKUJ_KASA_SAMO_3] = 0;
-    wartosci[SEM_ODBLOKUJ_KASA_SAMO_4] = 0;
-    wartosci[SEM_ODBLOKUJ_KASA_SAMO_5] = 0;
     wartosci[SEM_OTWORZ_KASA_STACJ_1] = 0;
     wartosci[SEM_OTWORZ_KASA_STACJ_2] = 0;
     wartosci[SEM_CZEKAJ_SYGNAL] = 0;

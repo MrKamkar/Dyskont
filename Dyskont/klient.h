@@ -38,7 +38,6 @@ Klient* StworzKlienta(int id);
 void UsunKlienta(Klient* k);
 
 //Funkcje operacyjne
-void DodajLosowyProdukt(Klient* k, const StanSklepu* stan_sklepu);
 void ZrobZakupy(Klient* k, const StanSklepu* stan_sklepu);
 int CzyZawieraAlkohol(const Klient* k);
 double ObliczSumeKoszyka(const Klient* k);

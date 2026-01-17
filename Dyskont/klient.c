@@ -51,12 +51,7 @@ void UsunKlienta(Klient* k) {
     }
 }
 
-void DodajLosowyProdukt(Klient* k, const StanSklepu* stan_sklepu) {
-    if (!k || !stan_sklepu || k->liczba_produktow >= k->ilosc_planowana) return;
-    
-    int indeks = rand() % stan_sklepu->liczba_produktow;
-    k->koszyk[k->liczba_produktow++] = stan_sklepu->magazyn[indeks].produkt;
-}
+
 
 void ZrobZakupy(Klient* k, const StanSklepu* stan_sklepu) {
     if (!k || !k->koszyk || !stan_sklepu) return;
@@ -64,13 +59,13 @@ void ZrobZakupy(Klient* k, const StanSklepu* stan_sklepu) {
     //Po prostu wypelniamy koszyk do zaplanowanej ilosci
     while (k->liczba_produktow < k->ilosc_planowana) {
         
-        //Sprawdz ewakuacje
-        if (stan_sklepu->flaga_ewakuacji) {
+        //Sprawdz ewakuacje lub SIGTERM
+        if (CZY_KONCZYC(stan_sklepu)) {
             return;  //Przerwij zakupy
         }
-        
-        //Symulacja namyslu (pomijana w trybie testu 1)
-        SYMULACJA_USLEEP(stan_sklepu, (100 + (rand() % 401)) * 1000);
+
+        //Symulacja chodzenia po sklepie i wyboru produktu (2-5 sekund)
+        SYMULACJA_USLEEP(stan_sklepu, (2000000 + (rand() % 3000001)));
 
         //Wybor produktu (roznorodnosc)
         int indeks = 0;
@@ -132,8 +127,7 @@ int main(int argc, char* argv[]) {
 
     int id_klienta = atoi(argv[1]);
     
-    //Jesli tylko 1 argument = tryb standalone (uruchomiony recznie)
-    //Jesli 2 argumenty = spawned przez dyskont (argv[2] = "0")
+    //Tryb standalone lub spawned przez dyskont
     g_tryb_standalone = (argc == 2) ? 1 : 0;
 
     StanSklepu* stan_sklepu;
@@ -142,13 +136,24 @@ int main(int argc, char* argv[]) {
     if (InicjalizujProcesPochodny(&stan_sklepu, &sem_id, "Klient") == -1) {
         return 1;
     }
+
+    //Pobierz ID wspólnej kolejki komunikatów
+    int msg_id = msgget(KLUCZ_KOLEJKI, 0600);
+    if (msg_id == -1) {
+        ZapiszLog(LOG_BLAD, "Klient: Blad dolaczenia do kolejki komunikatow!");
+        OdlaczPamiecWspoldzielona(stan_sklepu);
+        return 1;
+    }
     
-    //Ustawia g_sygnal_wyjscia, co przerywa blokujące operacje na semaforach
+    
+    //Ustawia g_sygnal_wyjscia (przerywa semafory) - obsluga SIGTERM i SIGQUIT
     struct sigaction sa;
     sa.sa_handler = ObslugaSygnaluWyjscia;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0; // Brak SA_RESTART - przerywa syscalls (usleep, semop)
     sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGQUIT, &sa, NULL);  // SIGQUIT jako alias dla SIGTERM
+
 
     srand(time(NULL) ^ getpid());
     Klient* klient = StworzKlienta(id_klienta);
@@ -161,7 +166,7 @@ int main(int argc, char* argv[]) {
     ZapiszLogF(LOG_INFO, "Klient [ID: %d] wszedl do sklepu. Wiek: %d lat. Planuje kupic %d produktow.", 
             klient->id, klient->wiek, klient->ilosc_planowana);
 
-    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != -2) {
+    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == 0) {
         stan_sklepu->liczba_klientow_w_sklepie++;
         ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     }
@@ -175,218 +180,193 @@ int main(int argc, char* argv[]) {
     //Flaga czy klient moze dokonac zakupu i powod odmowy
     int kod_bledu = 0;
     int ma_alkohol = CzyZawieraAlkohol(klient);
-
-    //Sprawdz czy nie ma ewakuacji
-    int ewakuacja = stan_sklepu->flaga_ewakuacji;
-    
-    if (ewakuacja) {
-        ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d]: EWAKUACJA! Natychmiast opuszcza sklep.", klient->id);
-        kod_bledu = 3;
-        goto wyjscie;
-    }
-
     int moze_kupic = 1;
+
+    //Sprawdz czy nie ma ewakuacji lub SIGTERM
+    if (CZY_KONCZYC(stan_sklepu)) {
+        ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] przerywa zakupy (powod: EWAKUACJA).", klient->id);
+        kod_bledu = 3;
+        moze_kupic = 0;
+    }
 
     //Wybor kasy: 95% samoobslugowa, 5% stacjonarna
     int wybor_kasy = rand() % 100; //0-99
     int idzie_do_samoobslugowej = (wybor_kasy < 95);
     
-    if (idzie_do_samoobslugowej) {
-        //=== KASA SAMOOBSLUGOWA ===
-        
+    //=== KASA SAMOOBSLUGOWA ===
+    if (moze_kupic && idzie_do_samoobslugowej) {
         klient->stan = STAN_KOLEJKA_SAMOOBSLUGOWA;
         klient->czas_dolaczenia_do_kolejki = time(NULL);
         
-        //Probuj dolaczic do kolejki samoobslugowej
-        int dolaczyl = 0;
+        //Wyslij zgloszenie do kolejki samoobslugowej (mtype=3)
+        Komunikat msg_req = {0};
+        msg_req.mtype = 3;
+        msg_req.id_klienta = klient->id;
+        msg_req.liczba_produktow = klient->liczba_produktow;
+        msg_req.suma_koszyka = ObliczSumeKoszyka(klient);
+        msg_req.ma_alkohol = ma_alkohol;
+        msg_req.wiek = klient->wiek;
         
-        if (DodajDoKolejkiSamoobslugowej(klient->id, stan_sklepu, sem_id) == 0) {
-            dolaczyl = 1;
-            ZapiszLogF(LOG_INFO, "Klient [ID: %d] dolaczyl do kolejki kas samoobslugowych.", klient->id);
-        } else {
-            ZapiszLogF(LOG_INFO, "Klient [ID: %d]: Kolejka samoobslugowa pelna, przechodzi do stacjonarnej.", klient->id);
-            idzie_do_samoobslugowej = 0;
-        }
+        size_t msg_size = sizeof(Komunikat) - sizeof(long);
         
-        if (!dolaczyl) {
-            //Nie dolaczyl, przejdz do stacjonarnej
-            idzie_do_samoobslugowej = 0;
+        ZapiszLogF(LOG_INFO, "Klient [ID: %d] dolacza do kolejki kas samoobslugowych (MSG IPC).", klient->id);
+        
+        if (msgsnd(msg_id, &msg_req, msg_size, 0) == -1) {
+            if (errno != EINTR) perror("msgsnd samo");
+            idzie_do_samoobslugowej = 0; //Blad wysylania -> sprobuj stacjonarnej
         } else {
-            
-            //Czekaj na wolna kase
-            int id_kasy = -1;
-            time_t czas_startu_oczekiwania = time(NULL);
-            
-            while (id_kasy == -1) {
-                //Sprawdz ewakuacje
-                ewakuacja = stan_sklepu->flaga_ewakuacji;
-                if (ewakuacja) {
-                    ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d]: EWAKUACJA! Natychmiast opuszcza sklep.", klient->id);
-                    moze_kupic = 0;
+            //Czekaj na odpowiedz (typ = 100 + ID)
+            Komunikat msg_res;
+            if (msgrcv(msg_id, &msg_res, msg_size, 100 + klient->id, 0) == -1) {
+                if (errno == EINTR) { 
+                    ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] przerywa oczekiwanie na kase samoobslugowa (powod: EWAKUACJA).", klient->id);
+                    moze_kupic = 0; 
                     kod_bledu = 3;
-                    goto wyjscie;
                 }
+            } else {
+                //Jest odpowiedz!
+                int wynik = msg_res.id_klienta;
+                int id_kasy_samo = msg_res.liczba_produktow;
                 
-                //Sprawdz czas oczekiwania
-                time_t teraz = time(NULL);
-                int timeout_kolejki = (stan_sklepu->tryb_testu == 1) ? 2 : MAX_CZAS_KOLEJKI;
-                if ((teraz - czas_startu_oczekiwania) >= timeout_kolejki) {
-                    ZapiszLogF(LOG_INFO, "Klient [ID: %d]: Przekroczono czas oczekiwania %d sek, przechodzi do stacjonarnej.",
-                            klient->id, timeout_kolejki);
-                    
-                    if (ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO) != -2) {
-                        int znaleziono = UsunZKolejki(stan_sklepu->kolejka_samo, &stan_sklepu->liczba_w_kolejce_samo, klient->id);
-                        ZwolnijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
-                        
-                        if (znaleziono) {
-                            ZapiszLogF(LOG_INFO, "Klient [ID: %d]: Usunieto z kolejki samoobslugowej (pozostalo: %d).",
-                                    klient->id, stan_sklepu->liczba_w_kolejce_samo);
-                        }
-                    }
-                    
-                    idzie_do_samoobslugowej = 0;
-                    break;
-                }
-                
-                struct timespec timeout = {1, 0};
-                struct sembuf op = {SEM_WOLNE_KASY_SAMO, -1, 0};
-                if (semtimedop(sem_id, &op, 1, &timeout) == 0) {
-                    //Semafor zajety - jest wolna kasa
-                    id_kasy = ZnajdzWolnaKase(stan_sklepu, sem_id);
-                    if (id_kasy == -1) {
-                        //Ktos inny zajal kase, oddaj semafor i probuj ponownie
-                        ZwolnijSemafor(sem_id, SEM_WOLNE_KASY_SAMO);
-                    }
-                }
-                //Jesli timeout (EAGAIN) - kontynuuj petle, sprawdzi ewakuacje/timeout
-            }
-            
-            if (id_kasy != -1 && idzie_do_samoobslugowej) {
-                //Zajmij kase
-                if (ZajmijKase(id_kasy, klient->id, stan_sklepu, sem_id) == 0) {
-                    //Usun siebie z kolejki samoobslugowej (bo zajmujemy kase)
-                    UsunKlientaZKolejkiSamoobslugowej(klient->id, stan_sklepu, sem_id);
-                    
-                    klient->stan = STAN_PRZY_KASIE;
-                    
-                    //Obsluz klienta przy kasie samoobslugowej
-                    int wynik_obslugi = ObsluzKlientaSamoobslugowo(id_kasy, klient->id, klient->liczba_produktow,
-                                               ObliczSumeKoszyka(klient), ma_alkohol, klient->wiek,
-                                               stan_sklepu, sem_id);
-                    
-                    if (wynik_obslugi == -1) {
-                        ZapiszLogF(LOG_INFO, "Klient [ID: %d]: Timeout blokady kasy, przechodzi do stacjonarnej.", klient->id);
-                        idzie_do_samoobslugowej = 0;
-                    } else if (wynik_obslugi == -2) {
-                        moze_kupic = 0;
-                        kod_bledu = 1;
-                        ZwolnijKase(id_kasy, stan_sklepu, sem_id);
-                    } else if (wynik_obslugi == -3) {
-                        moze_kupic = 0;
-                        kod_bledu = 3;
-                        goto wyjscie;
-                    } else {
-                        //Sukces - wydrukuj paragon i zwolnij kase
-                        WydrukujParagon(klient, "Kasa samoobslugowa", id_kasy + 1);
-                        ZwolnijKase(id_kasy, stan_sklepu, sem_id);
-                    }
+                if (wynik == 0) {
+                    WydrukujParagon(klient, "Kasa samoobslugowa", id_kasy_samo + 1);
+                    ZapiszLogF(LOG_INFO, "Klient [ID: %d] obsluzony w kasie samoobslugowej %d.", klient->id, id_kasy_samo + 1);
+                } else if (wynik == -2) {
+                    moze_kupic = 0; 
+                    kod_bledu = 1;
+                    ZapiszLogF(LOG_BLAD, "Kasa samoobslugowa: Weryfikacja wieku nieudana!");
+                } else if (wynik == -3) {
+                    moze_kupic = 0; 
+                    kod_bledu = 3;
                 } else {
-                    ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d]: Nie udalo sie zajac kasy samoobslugowej, przechodzi do stacjonarnej.", klient->id);
-                    idzie_do_samoobslugowej = 0;
+                    moze_kupic = 0; 
+                    kod_bledu = 2;
                 }
             }
         }
     }
     
-    if (!idzie_do_samoobslugowej && moze_kupic) {
+    //=== KASA STACJONARNA ===
+    if (moze_kupic && !idzie_do_samoobslugowej) {
         ZapiszLogF(LOG_INFO, "Klient [ID: %d] wybiera kase stacjonarna.", klient->id);
         
         //Sprawdz status obu kas stacjonarnych
-        //Sprawdz status obu kas stacjonarnych
-        if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) {
-            moze_kupic = 0;
-            goto wyjscie;
-        }
-        StanKasy stan_kasy1 = stan_sklepu->kasy_stacjonarne[0].stan;
-        StanKasy stan_kasy2 = stan_sklepu->kasy_stacjonarne[1].stan;
-        int kolejka1 = stan_sklepu->kasy_stacjonarne[0].liczba_w_kolejce;
-        int kolejka2 = stan_sklepu->kasy_stacjonarne[1].liczba_w_kolejce;
-        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        
-        int kasa1_otwarta = (stan_kasy1 != KASA_ZAMKNIETA && stan_kasy1 != KASA_ZAMYKANA);
-        int kasa2_otwarta = (stan_kasy2 != KASA_ZAMKNIETA && stan_kasy2 != KASA_ZAMYKANA);
-        int kasa2_pelna = (kolejka2 >= MAX_KOLEJKA_STACJONARNA);
-        
-        int wybrana_kasa = -1;
-        
-        if (kasa2_otwarta && !kasa2_pelna) {
-            //Kasa 2 jest glowna i ma miejsce
-            if (kasa1_otwarta && kolejka1 < kolejka2) {
-                wybrana_kasa = 0;
-            } else {
-                wybrana_kasa = 1;
-            }
-        } else if (kasa1_otwarta) {
-            //Kasa 2 zamknieta lub pelna, Kasa 1 otwarta => ustaw sie do Kasy 1
-            wybrana_kasa = 0;
-        } else if (kasa2_otwarta && kasa2_pelna) {
-            //Kasa 2 otwarta ale pelna, Kasa 1 zamknieta => ustaw sie do Kasy 1
-            wybrana_kasa = 0;
-        } else if (kasa2_otwarta) {
-            //Kasa 2 otwarta, Kasa 1 zamknieta => ustaw sie do Kasy 2
-            wybrana_kasa = 1;
-        } else {
-            //Obie zamkniete - ustaw sie do Kasy 1
-            wybrana_kasa = 0;
-        }
-        
-        if (wybrana_kasa == -1) {
-            ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d]: Brak dostepnych kas stacjonarnych!", klient->id);
+        if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != 0) {
             moze_kupic = 0;
             kod_bledu = 2;
         } else {
-            //Dolacz do wybranej kolejki
-            klient->stan = (wybrana_kasa == 0) ? STAN_KOLEJKA_KASA_1 : STAN_KOLEJKA_KASA_2;
-            klient->czas_dolaczenia_do_kolejki = time(NULL);
+            StanKasy stan_kasy1 = stan_sklepu->kasy_stacjonarne[0].stan;
+            StanKasy stan_kasy2 = stan_sklepu->kasy_stacjonarne[1].stan;
+            int kolejka1 = stan_sklepu->kasy_stacjonarne[0].liczba_w_kolejce;
+            int kolejka2 = stan_sklepu->kasy_stacjonarne[1].liczba_w_kolejce;
+            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             
-            if (DodajDoKolejkiStacjonarnej(wybrana_kasa, klient->id, stan_sklepu, sem_id) == 0) {
-                ZapiszLogF(LOG_INFO, "Klient [ID: %d] dolaczyl do kolejki kasy stacjonarnej %d.", klient->id, wybrana_kasa + 1);
-                
-                //Czekaj na obsluge (pomijane w trybie testu 1)
-                SYMULACJA_USLEEP(stan_sklepu, (2 + (rand() % 5)) * 1000000);
-                
-                klient->stan = STAN_PRZY_KASIE;
-                
-                if (ma_alkohol) {
-                    if (klient->wiek < 18) {
-                        ZapiszLogF(LOG_BLAD, "Kasa stacjonarna: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
-                                klient->id, klient->wiek);
-                        moze_kupic = 0;
-                        kod_bledu = 1;
-                    } else {
-                        ZapiszLogF(LOG_INFO, "Kasa stacjonarna: Weryfikacja wieku OK [ID: %d, wiek: %d]", klient->id, klient->wiek);
-                    }
+            int kasa1_otwarta = (stan_kasy1 != KASA_ZAMKNIETA && stan_kasy1 != KASA_ZAMYKANA);
+            int kasa2_otwarta = (stan_kasy2 != KASA_ZAMKNIETA && stan_kasy2 != KASA_ZAMYKANA);
+            int kasa2_pelna = (kolejka2 >= MAX_KOLEJKA_STACJONARNA);
+            
+            int wybrana_kasa = -1;
+            
+            if (kasa2_otwarta && !kasa2_pelna) {
+                if (kasa1_otwarta && kolejka1 < kolejka2) {
+                    wybrana_kasa = 0;
+                } else {
+                    wybrana_kasa = 1;
                 }
-                
-                if (moze_kupic) {
-                    WydrukujParagon(klient, "Kasa stacjonarna", wybrana_kasa + 1);
-                    ZapiszLogF(LOG_INFO, "Klient [ID: %d] zostal obsluzony przy kasie stacjonarnej. Suma: %.2f PLN",
-                            klient->id, ObliczSumeKoszyka(klient));
-                }
+            } else if (kasa1_otwarta) {
+                wybrana_kasa = 0;
+            } else if (kasa2_otwarta && kasa2_pelna) {
+                wybrana_kasa = 0;
+            } else if (kasa2_otwarta) {
+                wybrana_kasa = 1;
             } else {
-                ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d]: Kolejka stacjonarna pelna!", klient->id);
+                wybrana_kasa = 0;
+            }
+            
+            if (wybrana_kasa == -1) {
+                ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d]: Brak dostepnych kas stacjonarnych!", klient->id);
                 moze_kupic = 0;
                 kod_bledu = 2;
+            } else {
+                //Dolacz do wybranej kolejki
+                klient->stan = (wybrana_kasa == 0) ? STAN_KOLEJKA_KASA_1 : STAN_KOLEJKA_KASA_2;
+                klient->czas_dolaczenia_do_kolejki = time(NULL);
+                
+                Komunikat msg_req = {0};
+                msg_req.mtype = wybrana_kasa + 1; 
+                msg_req.id_klienta = klient->id;
+                
+                size_t msg_size = sizeof(Komunikat) - sizeof(long);
+                
+                if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == 0) {
+                    stan_sklepu->kasy_stacjonarne[wybrana_kasa].liczba_w_kolejce++;
+                    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                }
+                
+                ZapiszLogF(LOG_INFO, "Klient [ID: %d] dolacza do kolejki kasy stacjonarnej %d (MSG IPC).", klient->id, wybrana_kasa + 1);
+                
+                if (msgsnd(msg_id, &msg_req, msg_size, 0) == -1) {
+                    //Jesli blad wysylania, cofnij inkrementacje
+                    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == 0) {
+                        stan_sklepu->kasy_stacjonarne[wybrana_kasa].liczba_w_kolejce--;
+                        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                    }
+                    
+                    if (errno == EINTR) {
+                        kod_bledu = 3;
+                    } else {
+                        perror("Blad msgsnd");
+                        kod_bledu = 2;
+                    }
+                    moze_kupic = 0;
+                } else {
+                    //BLOKUJACE czekanie na odpowiedz od kasjera
+                    Komunikat msg_res;
+                    if (msgrcv(msg_id, &msg_res, msg_size, 100 + klient->id, 0) == -1) {
+                        if (errno == EINTR) {
+                            ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] przerywa oczekiwanie na kase stacjonarna (powod: EWAKUACJA).", klient->id);
+                            moze_kupic = 0;
+                            kod_bledu = 3;
+                        }
+                    } else {
+                        //Otrzymano potwierdzenie - jestem przy kasie!
+                        klient->stan = STAN_PRZY_KASIE;
+                        
+                        if (ma_alkohol) {
+                            if (klient->wiek < 18) {
+                                ZapiszLogF(LOG_BLAD, "Kasa stacjonarna: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
+                                        klient->id, klient->wiek);
+                                moze_kupic = 0;
+                                kod_bledu = 1;
+                            } else {
+                                ZapiszLogF(LOG_INFO, "Kasa stacjonarna: Weryfikacja wieku OK [ID: %d, wiek: %d]", klient->id, klient->wiek);
+                            }
+                        }
+                        
+                        if (moze_kupic) {
+                            WydrukujParagon(klient, "Kasa stacjonarna", wybrana_kasa + 1);
+                            ZapiszLogF(LOG_INFO, "Klient [ID: %d] zostal obsluzony przy kasie stacjonarnej. Suma: %.2f PLN",
+                                    klient->id, ObliczSumeKoszyka(klient));
+                        }
+                    }
+                }
             }
         }
     }
     
-wyjscie:
+    //=== WYJSCIE ZE SKLEPU ===
     klient->stan = STAN_WYJSCIE;
     
-    //Najpierw zaloguj wyjscie (przed operacja na semaforze)
+    //Sprawdz czy wychodzi podczas ewakuacji
+    int ewakuacja_w_toku = CZY_KONCZYC(stan_sklepu);
+    
+    //Zaloguj wyjscie
     if (moze_kupic) {
-        ZapiszLogF(LOG_INFO, "Klient [ID: %d] opuscil sklep po dokonaniu zakupow.", klient->id);
+        if (ewakuacja_w_toku) {
+            ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] opuscil sklep (powod: EWAKUACJA).", klient->id);
+        } else {
+            ZapiszLogF(LOG_INFO, "Klient [ID: %d] opuscil sklep po dokonaniu zakupow.", klient->id);
+        }
     } else {
         const char* powod;
         switch (kod_bledu) {
@@ -398,9 +378,8 @@ wyjscie:
         ZapiszLogF(LOG_BLAD, "Klient [ID: %d] opuscil sklep BEZ zakupow (powod: %s).", klient->id, powod);
     }
     
-    //Zmniejsz licznik klientow (moze sie nie udac jesli semafory usuniete)
-    //Zmniejsz licznik klientow (moze sie nie udac jesli semafory usuniete)
-    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != -2) {
+    //Zmniejsz licznik klientow
+    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == 0) {
         stan_sklepu->liczba_klientow_w_sklepie--;
         ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     }

@@ -5,11 +5,8 @@
 #include <time.h>
 #include "pamiec_wspoldzielona.h"
 
-//Czas oczekiwania na klienta przed zamknieciem kasy (w sekundach)
-#define CZAS_BEZCZYNNOSCI_DO_ZAMKNIECIA 30
-
 //Czas obslugi jednego produktu (w milisekundach)
-#define CZAS_OBSLUGI_PRODUKTU_MS 200
+#define CZAS_OBSLUGI_PRODUKTU_MS 500
 
 //Statusy kasjera
 typedef enum {
@@ -30,11 +27,7 @@ typedef struct {
 Kasjer* StworzKasjera(int id_kasy);
 void UsunKasjera(Kasjer* kasjer);
 
-int PobierzKlientaZKolejki(int id_kasy, StanSklepu* stan, int sem_id);
-int DodajDoKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id);
-int UsunZKolejkiStacjonarnej(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id);
-void ObsluzKlienta(Kasjer* kasjer, int id_klienta, int liczba_produktow, double suma, int tryb_testu);
-int CzyOtworzycKase1(StanSklepu* stan);
+void ObsluzKlienta(Kasjer* kasjer, int id_klienta, int liczba_produktow, double suma, StanSklepu* stan);
 
 //Migracja klientow z kasy 1 do kasy 2 (przy otwarciu kasy 2)
 int MigrujKlientowDoKasy2(StanSklepu* stan, int sem_id);

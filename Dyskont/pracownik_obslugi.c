@@ -1,81 +1,44 @@
 #include "pracownik_obslugi.h"
-#include "wspolne.h"
-#include <string.h>
-#include <sys/select.h>
-#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <sys/msg.h>
+#include <errno.h>
 
-//Inicjalizacja FIFO, tworzy lacze nazwane
-int InicjalizujFifoObslugi() {
-    //Usun istniejace FIFO jesli jest
-    unlink(FIFO_OBSLUGA);
-    
-    //Utworz nowe FIFO z prawami odczytu/zapisu
-    if (mkfifo(FIFO_OBSLUGA, 0666) == -1) {
-        if (errno != EEXIST) {
-            perror("Blad tworzenia FIFO obslugi");
-            return -1;
-        }
-    }
-    
-    return 0;
-}
-
-//Usuniecie FIFO
-void UsunFifoObslugi() {
-    if (unlink(FIFO_OBSLUGA) == -1) {
-        perror("Blad usuwania FIFO obslugi");
-    }
-}
-
-//Wysylanie zadania do pracownika przez FIFO
-int WyslijZadanieObslugi(ZadanieObslugi* zadanie) {
-    if (!zadanie) return -1;
-    
-    //Otwarcie FIFO do zapisu (nieblokujace)
-    int fd = open(FIFO_OBSLUGA, O_WRONLY | O_NONBLOCK);
-    if (fd == -1) {
-        //ENXIO = brak czytnika, ENOENT = brak pliku
-        if (errno != ENXIO && errno != ENOENT) {
-            perror("Blad otwarcia FIFO do zapisu");
-        }
+// Helper: Kasa Samoobslugowa uzywa tego do wyslania zlecenia
+int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek) {
+    int msg_id = msgget(KLUCZ_KOLEJKI, 0600);
+    if (msg_id == -1) {
         return -1;
     }
     
-    //Zapis struktury zadania
-    ssize_t napisano = write(fd, zadanie, sizeof(ZadanieObslugi));
-    if (napisano == -1) {
-        perror("Blad zapisu do FIFO");
-        close(fd);
-        return -1;
+    Komunikat msg;
+    msg.mtype = MSG_TYPE_PRACOWNIK; // 4
+    msg.operacja = typ_operacji;
+    msg.liczba_produktow = id_kasy; // ID Kasy jako nadawca (uzywajac pola int)
+    msg.wiek = wiek;
+    msg.id_klienta = 0;
+    msg.suma_koszyka = 0.0;
+    msg.ma_alkohol = 0;
+    
+    size_t size = sizeof(Komunikat) - sizeof(long);
+    
+    // Wyslij
+    if (msgsnd(msg_id, &msg, size, 0) == -1) {
+        if (errno != EINTR) perror("Pracownik helper msgsnd");
+        return -1; // Blad
     }
     
-    close(fd);
-    return 0;
+    // Czekaj na odpowiedz (kanal 2000 + id_kasy)
+    Komunikat res;
+    if (msgrcv(msg_id, &res, size, 2000 + id_kasy, 0) == -1) {
+        if (errno != EINTR) perror("Pracownik helper msgrcv");
+        return -1; // Blad
+    }
+    
+    return res.operacja; // Zwracamy wynik z pola operacja
 }
 
-//Odbieranie zadania przez pracownika
-int OdbierzZadanieObslugi(ZadanieObslugi* zadanie) {
-    if (!zadanie) return -1;
-    
-    //Otwarcie FIFO do odczytu (blokujace)
-    int fd = open(FIFO_OBSLUGA, O_RDONLY);
-    if (fd == -1) {
-        perror("Blad otwarcia FIFO do odczytu");
-        return -1;
-    }
-    
-    //Odczyt struktury zadania
-    ssize_t przeczytano = read(fd, zadanie, sizeof(ZadanieObslugi));
-    if (przeczytano <= 0) {
-        close(fd);
-        return -1;
-    }
-    
-    close(fd);
-    return 0;
-}
-
-//Glowna funkcja procesu pracownika obslugi
 #ifdef PRACOWNIK_STANDALONE
 int main() {
     StanSklepu* stan_sklepu;
@@ -85,93 +48,74 @@ int main() {
         return 1;
     }
     
+    // Obsluga sygnalow
     struct sigaction sa;
     sa.sa_handler = ObslugaSygnaluWyjscia;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGQUIT, &sa, NULL); 
     
-    ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na FIFO...");
+    ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na MSGQ...");
     
-    
-    //Otwarcie FIFO do odczytu nieblokujace, pozwala sprawdzac flage ewakuacji
-    int fd = open(FIFO_OBSLUGA, O_RDONLY | O_NONBLOCK);
-    if (fd == -1) {
-        perror("Pracownik: Blad otwarcia FIFO");
+    // Pobierz MsgQueue (DLA PRACOWNIKA)
+    int msg_id = msgget(KLUCZ_KOLEJKI, 0600);
+    if (msg_id == -1) {
+        ZapiszLog(LOG_BLAD, "Pracownik obslugi: Blad dolaczenia do kolejki komunikatow!");
         OdlaczPamiecWspoldzielona(stan_sklepu);
         return 1;
     }
     
-    //Glowna petla pracownika
-    while (1) {
-        //Reaguj TYLKO na SIGTERM, nie na flaga_ewakuacji
-        if (g_sygnal_wyjscia) {
-            ZapiszLog(LOG_INFO, "Pracownik obslugi: Otrzymano SIGTERM - koncze prace.");
-            break;
-        }
-        
-        //Blokujace czekanie na dane z FIFO (max 1 sek)
-        fd_set readfds;
-        FD_ZERO(&readfds);
-        FD_SET(fd, &readfds);
-        struct timeval timeout = {1, 0};  //1 sekunda
-        
-        int gotowe = select(fd + 1, &readfds, NULL, NULL, &timeout);
-        
-        if (gotowe > 0 && FD_ISSET(fd, &readfds)) {
-            ZadanieObslugi zadanie;
-            ssize_t przeczytano = read(fd, &zadanie, sizeof(ZadanieObslugi));
-            
-            if (przeczytano == sizeof(ZadanieObslugi)) {
-                //Przetworzenie zadania
-                switch (zadanie.typ) {
-                    case ZADANIE_ODBLOKUJ_KASE:
-                        ZapiszLogF(LOG_INFO, "Pracownik obslugi: Odblokowuje kase samoobslugowa [%d] dla klienta [%d]",
-                                zadanie.id_kasy + 1, zadanie.id_klienta);
-                        
-                        //Symulacja czasu interwencji
-                        SYMULACJA_USLEEP(stan_sklepu, 500000); //500ms
-                        
-                        //Odblokowanie kasy w pamieci wspoldzielonej
-                        if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != -2) {
-                            if (stan_sklepu->kasy_samo[zadanie.id_kasy].stan == KASA_ZABLOKOWANA) {
-                                stan_sklepu->kasy_samo[zadanie.id_kasy].stan = KASA_ZAJETA;
-                            }
-                            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                        }
-                        
-                        //Sygnal odblokowania - budzi czekajacego klienta
-                        ZwolnijSemafor(sem_id, SEM_ODBLOKUJ_KASA_SAMO(zadanie.id_kasy));
-                        
-                        ZapiszLogF(LOG_INFO, "Pracownik obslugi: Kasa samoobslugowa [%d] odblokowana.", zadanie.id_kasy + 1);
-                        break;
-                        
-                    case ZADANIE_WERYFIKUJ_WIEK:
-                        ZapiszLogF(LOG_INFO, "Pracownik obslugi: Weryfikacja wieku klienta [%d], wiek: %d",
-                                zadanie.id_klienta, zadanie.wiek_klienta);
-                        
-                        SYMULACJA_USLEEP(stan_sklepu, 300000);
-                        
-                        if (zadanie.wiek_klienta >= 18) {
-                            ZapiszLogF(LOG_INFO, "Pracownik obslugi: Wiek OK - klient [%d] moze kupic alkohol.",
-                                    zadanie.id_klienta);
-                        } else {
-                            ZapiszLogF(LOG_BLAD, "Pracownik obslugi: ODMOWA - klient [%d] niepelnoletni!",
-                                    zadanie.id_klienta);
-                        }
-                        break;
-                }
-            } else if (przeczytano == 0) {
-                //Koniec danych, ponowne otwarcie FIFO
-                close(fd);
-                fd = open(FIFO_OBSLUGA, O_RDONLY | O_NONBLOCK);
-                if (fd == -1) break;
-            }
-        }
-        //Jesli timeout (gotowe == 0) - kontynuuj petle, sprawdzi ewakuacje
-    }
+    size_t size = sizeof(Komunikat) - sizeof(long);
     
-    close(fd);
+    while (1) {
+        // Sprawdz czy koniec
+        if (CZY_KONCZYC(stan_sklepu)) {
+             ZapiszLog(LOG_INFO, "Pracownik obslugi: Koniec pracy.");
+             break;
+        }
+        
+        Komunikat msg_in;
+        // Odbior zlecen (Typ 4)
+        if (msgrcv(msg_id, &msg_in, size, MSG_TYPE_PRACOWNIK, 0) != -1) {
+            
+            int id_kasy_nadawcy = msg_in.liczba_produktow;
+            int operacja = msg_in.operacja;
+            int wynik = 1; // Default OK
+            
+            // Symulacja czasu reakcji
+            SYMULACJA_USLEEP(stan_sklepu, 500000); // 0.5s
+            
+            if (operacja == OP_WERYFIKACJA_WIEKU) {
+                if (msg_in.wiek < 18) {
+                    ZapiszLogF(LOG_INFO, "Pracownik: Weryfikacja wieku NIEUDANA (lat: %d) dla kasy %d", msg_in.wiek, id_kasy_nadawcy + 1);
+                    wynik = 0;
+                } else {
+                    ZapiszLogF(LOG_INFO, "Pracownik: Weryfikacja wieku OK (lat: %d) dla kasy %d", msg_in.wiek, id_kasy_nadawcy + 1);
+                    wynik = 1;
+                }
+            } else if (operacja == OP_ODBLOKOWANIE_KASY) {
+                ZapiszLogF(LOG_INFO, "Pracownik: Odblokowanie kasy %d", id_kasy_nadawcy + 1);
+                wynik = 1;
+            }
+            
+            // Odeslij wynik (Kanal 2000 + ID kasy)
+            Komunikat res;
+            res.mtype = 2000 + id_kasy_nadawcy;
+            res.operacja = wynik;
+            res.liczba_produktow = id_kasy_nadawcy;
+            // Reszta zer
+            res.id_klienta = 0; res.suma_koszyka = 0; res.ma_alkohol = 0; res.wiek = 0;
+            
+            msgsnd(msg_id, &res, size, 0);
+            
+        } else {
+            if (errno == EINTR) continue;
+            // Inny blad msgq
+            perror("Pracownik msgrcv");
+            break; 
+        }
+    }
     OdlaczPamiecWspoldzielona(stan_sklepu);
     
     return 0;

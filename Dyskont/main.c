@@ -16,11 +16,14 @@
 //Globalne zmienne dla czyszczenia zasobow
 static StanSklepu* g_stan_sklepu = NULL;
 static int g_sem_id = -1;
+static int g_msg_id = -1;           // ID wspólnej kolejki komunikatów
 static char g_sciezka[256];
 
 //Globalne zmienne dla obslugi SIGCHLD
 static int g_aktywnych_klientow = 0; // Teraz zwykly int, modyfikowany tylko w main
 static volatile sig_atomic_t g_calkowita_liczba_klientow = 0;
+static int g_is_parent = 1; // Flaga oznaczajaca glowny proces (do czyszczenia)
+static volatile sig_atomic_t g_zadanie_zamkniecia = 0; // Flaga prosba o zamkniecie (Ctrl+C)
 
 //Globalne zmienne dla mechanizmu Self-Pipe (IPC)
 static int g_pipe_fd[2]; // [0] - odczyt (main), [1] - zapis (handler)
@@ -33,7 +36,7 @@ void ObslugaSIGCHLD(int sig) {
     
     //Zbierz wszystkie zakonczone dzieci bez blokowania
     while (waitpid(-1, &status, WNOHANG) > 0) {
-        //Zamiast modyfikowac licznik, wyslij bajt do potoku (IPC)
+        //Self-Pipe Trick
         char dummy = 'x';
         write(g_pipe_fd[1], &dummy, 1);
         
@@ -44,7 +47,7 @@ void ObslugaSIGCHLD(int sig) {
     errno = saved_errno;
 }
 
-//Funkcja pomocnicza do aktualizacji licznika na podstawie danych z potoku
+//Aktualizuj licznik klientow
 void AktualizujLicznikKlientow() {
     char buf[128];
     ssize_t bytes_read;
@@ -101,38 +104,33 @@ void ObslugaSIGTERM(int sig) {
     (void)sig;
     if (!g_stan_sklepu) return;
     
-    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    //Ustaw flagi bez blokowania mutexow (async-signal-safe)
     g_stan_sklepu->flaga_ewakuacji = 1;
     g_stan_sklepu->polecenie_kierownika = 3;  //POLECENIE_EWAKUACJA
-    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
-    ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: Sygnal SIGTERM - EWAKUACJA! Klienci opuszczaja sklep.");
+    //Nie uzywamy ZapiszLog bo uzywa mutexow/streamow - niebezpieczne w handlerze
+    //const char* msg = "Kierownik: Otrzymano sygnał ewakuacji.\n";
+    //write(STDERR_FILENO, msg, 40);
 }
 
 //Handler sygnalu SIGINT, czyszczenie zasobow
+//Handler sygnalu SIGINT, czyszczenie zasobow
 void ObslugaSIGINT(int sig) {
     (void)sig;
-    ZapiszLog(LOG_INFO, "Otrzymano SIGINT - rozpoczynam zamykanie systemu..");
     
-    //Wyslij SIGKILL do wszystkich procesow (obudz spiochow i wymus koniec)
-    kill(0, SIGKILL);
-    
-    //Zamkniecie systemu logowania
-    ZamknijSystemLogowania();
-    
-    //Odlaczenie i usuniecie pamieci wspoldzielonej
     if (g_stan_sklepu) {
-        OdlaczPamiecWspoldzielona(g_stan_sklepu);
-    }
-    UsunPamiecWspoldzielona();
-    
-    //Usuniecie semaforow
-    if (g_sem_id != -1) {
-        UsunSemafory(g_sem_id);
+        g_stan_sklepu->flaga_ewakuacji = 1; //To przerwie petle CzekajNaSygnal w semafory.c
     }
     
-    printf("System zamkniety.\n");
-    exit(0);
+    //Ustaw flage zamkniecia (async-signal-safe)
+    g_zadanie_zamkniecia = 1;
+    
+    //Wyslij SIGTERM do calej grupy procesow (0) - to obudzi spiace dzieci (usleep)
+    //To jest ryzykowne (main tez dostanie), ale konieczne dla natychmiastowej reakcji spiacych dzieci.
+    //Main musi byc odporny na SIGTERM (handler ustawia tylko flagi).
+    kill(0, SIGTERM);
+
+    //KONIEC - main loop wyjdzie, cleanup wykona sie w main
 }
 
 int main(int argc, char* argv[]) {
@@ -147,6 +145,10 @@ int main(int argc, char* argv[]) {
     int flags = fcntl(g_pipe_fd[0], F_GETFL, 0);
     fcntl(g_pipe_fd[0], F_SETFL, flags | O_NONBLOCK);
     
+    //Ustawienie FD_CLOEXEC - pipe nie bedzie dziedziczony przez exec()
+    fcntl(g_pipe_fd[0], F_SETFD, FD_CLOEXEC);
+    fcntl(g_pipe_fd[1], F_SETFD, FD_CLOEXEC);
+    
     //Pobranie czasu symulacji i opcjonalnych argumentow
     if (argc < 2) {
         fprintf(stderr, "Uzycie: %s <czas_symulacji_sekund> <nr_testu*> <max_klientow*>\n", argv[0]);
@@ -156,8 +158,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    int czas_symulacji_arg = atoi(argv[1]);
-    if (czas_symulacji_arg < 0) {
+    int czas_symulacji = atoi(argv[1]);
+    if (czas_symulacji < 0) {
         fprintf(stderr, "Blad: Czas symulacji musi byc liczba wieksza od 0\n");
         return 1;
     }
@@ -186,15 +188,17 @@ int main(int argc, char* argv[]) {
     snprintf(g_sciezka, sizeof(g_sciezka), "%s", argv[0]);
     
     //Rejestracja handlerow sygnalow
-    signal(SIGINT, ObslugaSIGINT);
+    signal(SIGINT, ObslugaSIGINT);    //Ctrl+C: graceful shutdown
     signal(SIGCHLD, ObslugaSIGCHLD);  //Automatycznie gdy dziecko sie konczy
-    signal(SIGUSR1, ObslugaSIGUSR1);  //Sygnal 1, otwieranie kasy 2
-    signal(SIGUSR2, ObslugaSIGUSR2);  //Sygnal 2, zamykanie kasy
-    signal(SIGTERM, ObslugaSIGTERM);  //Sygnal 3, ewakuacja
+    signal(SIGUSR1, ObslugaSIGUSR1);  //Otwieranie kasy 2
+    signal(SIGUSR2, ObslugaSIGUSR2);  //Zamykanie kasy 1
+    signal(SIGTERM, ObslugaSIGTERM);  //Ewakuacja
+    signal(SIGQUIT, ObslugaSIGTERM);  //Ctrl+\: Ewakuacja
+    
     
     //Inicjalizacja systemu logowania
     printf("=== Symulacja Dyskontu ===\n");
-    printf("Czas symulacji: %d sekund\n", czas_symulacji_arg);
+    printf("Czas symulacji: %d sekund\n", czas_symulacji);
     printf("Max klientow rownoczesnie: %d\n", max_klientow);
     if (tryb_testu == 1) {
         printf("TRYB TESTU: Bez sleepow symulacyjnych\n");
@@ -217,10 +221,21 @@ int main(int argc, char* argv[]) {
     
     ZapiszLog(LOG_INFO, "Pamiec wspoldzielona zainicjalizowana pomyslnie.");
     
+    //Inicjalizacja wspólnej kolejki komunikatów
+    g_msg_id = msgget(KLUCZ_KOLEJKI, IPC_CREAT | 0600);
+    if (g_msg_id == -1) {
+        perror("Blad inicjalizacji kolejki komunikatow");
+        ZapiszLog(LOG_BLAD, "Nie udalo sie zainicjalizowac kolejki komunikatow!");
+        ObslugaSIGINT(0); return 1;
+    }
+
+    ZapiszLog(LOG_INFO, "Kolejka komunikatow zainicjalizowana pomyslnie.");
+    
     //Inicjalizacja semaforow
     ZapiszLog(LOG_INFO, "Inicjalizacja semaforow..");
     g_sem_id = InicjalizujSemafory();
     if (g_sem_id == -1) {
+        perror("Blad inicjalizacji semaforow");
         ZapiszLog(LOG_BLAD, "Nie udalo sie zainicjalizowac semaforow!");
         ObslugaSIGINT(0);
         return 1;
@@ -239,7 +254,9 @@ int main(int argc, char* argv[]) {
             ZapiszLog(LOG_BLAD, "Nie udalo sie stworzyc procesu kasjera!");
             continue;
         }
-        else if (pid == 0) {
+        if (pid == 0) {
+            g_is_parent = 0; // Dziecko nie sprzata zasobow
+            
             //Proces dziecka, uruchomienie kasjera przez exec
             char id_str[16];
             sprintf(id_str, "%d", i);
@@ -257,13 +274,7 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    //Inicjalizacja FIFO dla pracownika obslugi
-    ZapiszLog(LOG_INFO, "Inicjalizacja FIFO obslugi..");
-    if (InicjalizujFifoObslugi() == -1) {
-        ZapiszLog(LOG_BLAD, "Nie udalo sie zainicjalizowac FIFO obslugi!");
-    } else {
-        ZapiszLog(LOG_INFO, "FIFO obslugi zainicjalizowane.");
-    }
+
     
     //Uruchomienie procesu pracownika obslugi
     ZapiszLog(LOG_INFO, "Uruchamianie procesu pracownika obslugi..");
@@ -274,6 +285,8 @@ int main(int argc, char* argv[]) {
         ZapiszLog(LOG_BLAD, "Nie udalo sie stworzyc procesu pracownika obslugi!");
     }
     else if (pid_pracownik == 0) {
+        g_is_parent = 0; // Dziecko nie sprzata zasobow
+        
         //Proces dziecka, uruchomienie pracownika przez exec
         execl("./pracownik", "pracownik", (char*)NULL);
         
@@ -299,6 +312,8 @@ int main(int argc, char* argv[]) {
             continue;
         }
         else if (pid == 0) {
+            g_is_parent = 0; // Dziecko nie sprzata zasobow
+            
             //Proces dziecka, uruchomienie kasy samoobslugowej przez exec
             char id_str[16];
             sprintf(id_str, "%d", i);
@@ -316,29 +331,26 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    //Czas symulacji (z argumentu)
-    int CZAS_SYMULACJI_SEK = czas_symulacji_arg;
-    
     char buf[256];
     sprintf(buf, "Symulacja bedzie trwac %d sekund. Max klientow rownoczesnie: %d", 
-            CZAS_SYMULACJI_SEK, g_stan_sklepu->max_klientow_rownoczesnie);
+            czas_symulacji, g_stan_sklepu->max_klientow_rownoczesnie);
     ZapiszLog(LOG_INFO, buf);
     
     //Zmienna dla tworzenia procesow
     int id_klienta = 0;
     
     time_t czas_startu = time(NULL);
-    time_t czas_konca = czas_startu + CZAS_SYMULACJI_SEK;
+    time_t czas_konca = czas_startu + czas_symulacji;
     
     ZapiszLog(LOG_INFO, "Rozpoczynam ciagla symulacje klientow...");
     
     
     //Glowna petla symulacji
-    while (time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji) {
+    while (time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji && !g_zadanie_zamkniecia) {
         
         //Tworz nowych klientow jesli jest miejsce
         while (g_aktywnych_klientow < g_stan_sklepu->max_klientow_rownoczesnie && 
-               time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji) {
+               time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji && !g_zadanie_zamkniecia) {
             
             pid_t pid = fork();
             
@@ -347,6 +359,8 @@ int main(int argc, char* argv[]) {
                 break;
             }
             else if (pid == 0) {
+                g_is_parent = 0; // Dziecko nie sprzata zasobow
+                
                 //Proces dziecka, uruchomienie klienta przez exec
                 char id_str[16];
                 sprintf(id_str, "%d", id_klienta + 1);
@@ -358,7 +372,6 @@ int main(int argc, char* argv[]) {
                 exit(1);
             }
             else {
-                //Proces rodzica
                 //Aktualizuj licznik przed zwiekszeniem (odczytaj z potoku)
                 AktualizujLicznikKlientow();
                 
@@ -377,10 +390,15 @@ int main(int argc, char* argv[]) {
         //Wyswietlanie statusu co 1 sekunde
         time_t teraz = time(NULL);
         sprintf(buf, "Symulacja: %ld/%d sek, klientow aktywnych: %d, utworzono: %d",
-                teraz - czas_startu, CZAS_SYMULACJI_SEK, (int)g_aktywnych_klientow, id_klienta);
+                teraz - czas_startu, czas_symulacji, (int)g_aktywnych_klientow, id_klienta);
         ZapiszLog(LOG_INFO, buf);
         
         CzekajNaSygnal(g_sem_id);
+    }
+    
+    //Sprawdz czy to bylo Ctrl+C czy koniec czasu
+    if (g_zadanie_zamkniecia) {
+        ZapiszLog(LOG_INFO, "Otrzymano SIGINT - rozpoczynam zamykanie systemu..");
     }
     
     //NAJPIERW ustaw flage ewakuacji - klienci sprawdza ja i wyjda
@@ -401,7 +419,7 @@ int main(int argc, char* argv[]) {
     int timeout_klientow = 30;
     
     while (g_aktywnych_klientow > 0 && (time(NULL) - czas_oczekiwania_start) < timeout_klientow) {
-        AktualizujLicznikKlientow(); //Wazne: czytaj z potoku w petli cleanup!
+        AktualizujLicznikKlientow();
         CzekajNaSygnal(g_sem_id);
     }
     
@@ -419,16 +437,18 @@ int main(int argc, char* argv[]) {
         while (g_aktywnych_klientow > 0 && (time(NULL) - start_ewak) < 5) {
             CzekajNaSygnal(g_sem_id);
         }
+        
+        if (g_aktywnych_klientow > 0) {
+             ZapiszLog(LOG_BLAD, "Klienci nie chca wyjsc po dobroci. Kill -9!");
+             kill(0, SIGKILL);
+        }
     }
     
     sprintf(buf, "Symulacja zakonczona. Laczna liczba klientow pomyslnie: %d", (int)g_calkowita_liczba_klientow);
     ZapiszLog(LOG_INFO, buf);
     
-    //Ustawienie flagi ewakuacji dla kasjerow
+    //Zamykanie procesow pomocniczych
     ZapiszLog(LOG_INFO, "Zamykanie procesow kasjerow i kas samoobslugowych..");
-    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    g_stan_sklepu->flaga_ewakuacji = 1;
-    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     //Wyslij SIGTERM do wszystkich procesow pomocniczych aby wybudzic z semaforow
     for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
@@ -489,25 +509,47 @@ int main(int argc, char* argv[]) {
     }
     
     if (procesy_pozostale > 0) {
-        sprintf(buf, "Timeout cleanup! Pozostalo %d procesow, kontynuuje.", procesy_pozostale);
+        sprintf(buf, "Timeout cleanup! Pozostalo %d procesow, wysylam SIGKILL.", procesy_pozostale);
         ZapiszLog(LOG_OSTRZEZENIE, buf);
+        
+        //Ostateczne rozwiazanie - SIGKILL dla wszystkich opornych
+        for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) if (pid_kasjerow[i] > 0) kill(pid_kasjerow[i], SIGKILL);
+        for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) if (pid_kas_samo[i] > 0) kill(pid_kas_samo[i], SIGKILL);
+        if (pid_pracownik > 0) kill(pid_pracownik, SIGKILL);
+        
+        //Jeszcze chwila na posprzatanie przez OS
+        sleep(1);
     }
     
     ZapiszLog(LOG_INFO, "Koniec symulacji.");
     
-    //Czyszczenie zasobow
-    ZapiszLog(LOG_INFO, "Zwalnianie zasobow IPC..");
-    UsunFifoObslugi();
-    OdlaczPamiecWspoldzielona(g_stan_sklepu);
-    UsunPamiecWspoldzielona();
-    UsunSemafory(g_sem_id);
+    //Czyszczenie zasobow IPC (tylko proces rodzica)
+    if (g_is_parent) {
+        ZapiszLog(LOG_INFO, "Zwalnianie zasobow IPC..");
+        
+
+        OdlaczPamiecWspoldzielona(g_stan_sklepu);
+        UsunPamiecWspoldzielona();
+        UsunSemafory(g_sem_id);
+        
+        if (g_msg_id != -1) msgctl(g_msg_id, IPC_RMID, NULL);
+        
+        ZapiszLog(LOG_INFO, "Usunieto kolejke komunikatow.");
+        
+        //Zamknij potok IPC
+        close(g_pipe_fd[0]);
+        close(g_pipe_fd[1]);
+        
+        //Zamkniecie loggera NA SAM KONIEC - procesy moga logowac az do zakonczenia
+        ZamknijSystemLogowania();
+    }
     
-    //Zamknij potok IPC
-    close(g_pipe_fd[0]);
-    close(g_pipe_fd[1]);
-    
-    ZamknijSystemLogowania();
-    
-    printf("=== Symulacja zakonczona ===\n");
+    if (g_is_parent) {
+        if (g_zadanie_zamkniecia) {
+            printf("\n=== System zamkniety (Ctrl+C) ===\n");
+        } else {
+            printf("\n=== Symulacja zakonczona ===\n");
+        }
+    }
     return 0;
 }

@@ -34,8 +34,8 @@ typedef struct {
 } Produkt;
 
 //Maksymalne rozmiary kolejek
-#define MAX_KOLEJKA_SAMO 500
-#define MAX_KOLEJKA_STACJONARNA 200
+#define MAX_KOLEJKA_SAMO 30
+#define MAX_KOLEJKA_STACJONARNA 10
 #define MAX_PRODUKTOW 50
 
 //Liczba kas
@@ -48,12 +48,11 @@ typedef struct {
 //Parametry symulacji
 #define MIN_KAS_SAMO_CZYNNYCH 3
 #define KLIENCI_NA_KASE 5  //Parametr K z opisu
-#define MAX_CZAS_OCZEKIWANIA 30 //T w sekundach
 #define MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE 1000  //Domyslna wartosc
-#define PRZERWA_MIEDZY_KLIENTAMI_MS 10 //Przerwa miedzy klientami w ms
+#define PRZERWA_MIEDZY_KLIENTAMI_MS 500 //Przerwa miedzy klientami
 
 //Makro do symulacyjnych usleep - pomija sleep gdy tryb_testu == 1
-#define SYMULACJA_USLEEP(stan, us) do { if ((stan)->tryb_testu == 0) usleep(us); } while(0)
+#define SYMULACJA_USLEEP(stan, us) if ((stan)->tryb_testu == 0) usleep(us);
 
 //Stany kas
 typedef enum {

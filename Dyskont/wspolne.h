@@ -8,30 +8,47 @@
 #include "semafory.h"
 #include "logi.h"
 
-//Globalna flaga sygnalu wyjscia (SIGTERM) - dostepna dla wszystkich procesow
+//Klucz dla wspólnej kolejki komunikatów (jedna kolejka dla wszystkich)
+#define KLUCZ_KOLEJKI 12345
+
+//Globalna flaga sygnalu wyjscia (SIGQUIT w potomkach) - dostepna dla wszystkich procesow
 extern volatile sig_atomic_t g_sygnal_wyjscia;
 
 //Makro sprawdzajace czy proces powinien sie zakonczyc
 #define CZY_KONCZYC(stan) ((stan)->flaga_ewakuacji || g_sygnal_wyjscia)
 
-//Wspólny handler SIGTERM dla procesów pochodnych
+//Wspólny handler SIGQUIT dla procesów pochodnych (ustawia g_sygnal_wyjscia)
 void ObslugaSygnaluWyjscia(int sig);
 
 //Inicjalizacja procesu pochodnego (pamiec, semafory, logowanie)
-//Zwraca 0 = sukces, -1 = blad
 int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_procesu);
 
 //Usuwa element z kolejki tablicowej i przesuwa pozostale elementy
-//Zwraca 1 jesli znaleziono i usunieto, 0 jesli nie znaleziono
 int UsunZKolejki(int* kolejka, int* liczba, int wartosc_do_usuniecia);
 
+#define MSG_TYPE_KASA_1 1
+#define MSG_TYPE_KASA_2 2
+#define MSG_TYPE_SAMOOBSLUGA 3
+#define MSG_TYPE_PRACOWNIK 4
+
+//Kody operacji dla pracownika
+#define OP_WERYFIKACJA_WIEKU 1
+#define OP_ODBLOKOWANIE_KASY 2
+
+typedef struct {
+    long mtype;       // Typ komunikatu: 1=Do Kasy 1, 2=Do Kasy 2, 3=Do Samoobslugi, 4=Do Pracownika, (100+ID)=Do Klienta
+    int id_klienta;   // Dane: ID klienta
+    int liczba_produktow;
+    double suma_koszyka;
+    int ma_alkohol;
+    int wiek;
+    int operacja;     // Typ zlecenia dla pracownika
+} Komunikat;
+
 //Blokujace czekanie na semafor z timeoutem
-//Zwraca 0 = semafor zajety, -1 = timeout lub blad
 int CzekajNaSemafor(int sem_id, int sem_num, int sek_timeout);
 
 //Blokujace czekanie na semafor az do przerwania przez sygnal (np. SIGCHLD)
-//Zamiast pause() + alarm() - czyste IPC
-//Zwraca 0 gdy sygnal przerwał, -1 przy bledzie
 int CzekajNaSygnal(int sem_id);
 
 #endif

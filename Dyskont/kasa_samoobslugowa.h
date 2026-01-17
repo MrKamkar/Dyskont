@@ -5,28 +5,18 @@
 #include <time.h>
 #include "pamiec_wspoldzielona.h"
 
-//Czas skanowania jednego produktu (wolniejszy niz kasjer)
-#define CZAS_SKANOWANIA_PRODUKTU_MS 300
+// Czas skanowania jednego produktu (wolniejszy niz kasjer)
+#define CZAS_SKANOWANIA_PRODUKTU_MS 800
 
-//Szansa na losowa blokade kasy - 1 na X produktow
-#define SZANSA_BLOKADY 10
+//Szansa na losowa blokade kasy - 1 na X produktow (5%)
+#define SZANSA_BLOKADY 20
 
-//Czas oczekiwania na odblokowaanie kasy (w sekundach)
-#define CZAS_OCZEKIWANIA_NA_ODBLOKOWANIE 5
-
-//Maksymalny czas oczekiwania w kolejce (T) w sekundach
-#define MAX_CZAS_KOLEJKI 30
-
-//Funkcje zarzadzania kolejka samoobslugowa
-int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id);
-int UsunKlientaZKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id);
-int ZnajdzWolnaKase(StanSklepu* stan, int sem_id);
+//Funkcje zarzadzania kasami samoobslugowymi
 int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id);
 void ZwolnijKase(int id_kasy, StanSklepu* stan, int sem_id);
 
 //Funkcje dynamicznego zarzadzania kasami
 int ObliczWymaganaLiczbeKas(int liczba_klientow);
-void AktualizujLiczbeKas(StanSklepu* stan, int sem_id);
 
 //Obsluga klienta (zwraca 0 gdy sukces, -1 gdy timeout blokady, -2 gdy niepelnoletni)
 int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow, double suma, int ma_alkohol, int wiek, StanSklepu* stan, int sem_id);

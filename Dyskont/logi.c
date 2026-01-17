@@ -38,12 +38,14 @@ static void* PetlaLoggera(void* arg) {
         perror("Blad otwarcia pliku logow");
         pthread_exit(NULL);
     }
+    
+    //Ustawienie FD_CLOEXEC - plik logu nie bedzie dziedziczony przez exec()
+    fcntl(deskryptor_pliku, F_SETFD, FD_CLOEXEC);
 
     struct KomunikatLog msg;
     while (1) {
         ssize_t result = msgrcv(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0, 0);
         if (result == -1) {
-            //Jesli wywolanie zostalo przerwane przez sygnal, ponow je
             if (errno == EINTR) {
                 continue;
             }
@@ -131,23 +133,25 @@ void UruchomWatekLogujacy() {
 }
 
 void ZamknijSystemLogowania() {
-    //Zamiast wysylac komunikat (co moze blokowac gdy kolejka pelna), anulujemy watek
+    //Wysylamy komunikat konca i czekamy az watek przetworzy wszystkie logi
     
-    //Czekanie na zakonczenie watku loggera (tylko jesli to nie logger wola te funkcje)
-    if (watek_uruchomiony) {
+    if (watek_uruchomiony && id_kolejki != -1) {
         if (!pthread_equal(pthread_self(), watek_loggera)) {
-            //Wymus zakonczenie (cancellation)
-            pthread_cancel(watek_loggera);
+            //Wyslij komunikat konca
+            struct KomunikatLog msg;
+            msg.typ_komunikatu = TYP_KONIEC;
+            msg.typ_logu = LOG_INFO;
+            strcpy(msg.tresc, "Koniec logowania");
+            msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0); //Blokujace
             
-            if (pthread_join(watek_loggera, NULL) != 0) {
-                perror("Blad pthread_join");
-            }
+            //Czekaj na zakonczenie watku loggera
+            pthread_join(watek_loggera, NULL);
         }
     }
 
     //Usuniecie kolejki
-    if (msgctl(id_kolejki, IPC_RMID, NULL) == -1) {
-        perror("Blad usuwania kolejki");
+    if (id_kolejki != -1 && msgctl(id_kolejki, IPC_RMID, NULL) == -1) {
+        perror("Blad usuwania kolejki logow");
     }
 }
 

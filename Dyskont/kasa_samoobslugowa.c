@@ -4,61 +4,11 @@
 #include <string.h>
 #include <signal.h>
 
-
-
-//Dodaje klienta do wspolnej kolejki samoobslugowej
-int DodajDoKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
-    if (!stan) return -1;
-    
-    if (ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO) == -2) return -1;
-    
-    int wynik = -1;
-    if (stan->liczba_w_kolejce_samo < MAX_KOLEJKA_SAMO) {
-        stan->kolejka_samo[stan->liczba_w_kolejce_samo] = id_klienta;
-        stan->liczba_w_kolejce_samo++;
-        wynik = 0;
-    }
-    
-    ZwolnijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
-    return wynik;
-}
-
-//Usuwa konkretnego klienta z kolejki samoobslugowej po ID
-int UsunKlientaZKolejkiSamoobslugowej(int id_klienta, StanSklepu* stan, int sem_id) {
-    if (!stan) return -1;
-    
-    if (ZajmijSemafor(sem_id, MUTEX_KOLEJKA_SAMO) == -2) return -1;
-    
-    //Szukaj klienta i usun z kolejki
-    int znaleziono = UsunZKolejki(stan->kolejka_samo, &stan->liczba_w_kolejce_samo, id_klienta);
-    
-    ZwolnijSemafor(sem_id, MUTEX_KOLEJKA_SAMO);
-    return znaleziono ? 0 : -1;
-}
-
-//Szuka wolnej kasy samoobslugowej, zwraca jej indeks lub -1
-int ZnajdzWolnaKase(StanSklepu* stan, int sem_id) {
-    if (!stan) return -1;
-    
-    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) return -1;
-    
-    int wolna_kasa = -1;
-    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-        if (stan->kasy_samo[i].stan == KASA_WOLNA) {
-            wolna_kasa = i;
-            break;
-        }
-    }
-    
-    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    return wolna_kasa;
-}
-
 //Zajmuje kase dla klienta
 int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
     if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) return -1;
     
-    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) return -1;
+    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != 0) return -1;
     
     int wynik = -1;
     if (stan->kasy_samo[id_kasy].stan == KASA_WOLNA) {
@@ -76,14 +26,11 @@ int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id) {
 void ZwolnijKase(int id_kasy, StanSklepu* stan, int sem_id) {
     if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) return;
     
-    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) return;
+    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != 0) return;
     stan->kasy_samo[id_kasy].stan = KASA_WOLNA;
     stan->kasy_samo[id_kasy].id_klienta = -1;
     stan->kasy_samo[id_kasy].czas_rozpoczecia = 0;
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    
-    //Sygnal dla czekajacych klientow - jest wolna kasa
-    ZwolnijSemafor(sem_id, SEM_WOLNE_KASY_SAMO);
 }
 
 //Oblicza wymagana liczbe kas: K klientow = 1 kasa, min 3
@@ -92,49 +39,6 @@ int ObliczWymaganaLiczbeKas(int liczba_klientow) {
     if (wymagane < MIN_KAS_SAMO_CZYNNYCH) wymagane = MIN_KAS_SAMO_CZYNNYCH;
     if (wymagane > LICZBA_KAS_SAMOOBSLUGOWYCH) wymagane = LICZBA_KAS_SAMOOBSLUGOWYCH;
     return wymagane;
-}
-
-//Aktualizuje liczbe czynnych kas w zaleznosci od liczby klientow
-void AktualizujLiczbeKas(StanSklepu* stan, int sem_id) {
-    if (!stan) return;
-    
-    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) return;
-    
-    int liczba_klientow = stan->liczba_klientow_w_sklepie;
-    int wymagane = ObliczWymaganaLiczbeKas(liczba_klientow);
-    int aktualne = stan->liczba_czynnych_kas_samo;
-    
-    char buf_log[256];
-    
-    //Otworz wiecej kas jesli potrzeba
-    if (wymagane > aktualne) {
-        for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH && aktualne < wymagane; i++) {
-            if (stan->kasy_samo[i].stan == KASA_ZAMKNIETA) {
-                stan->kasy_samo[i].stan = KASA_WOLNA;
-                stan->kasy_samo[i].id_klienta = -1;
-                aktualne++;
-                sprintf(buf_log, "Kasa samoobslugowa [%d]: Otwarta (wymagane: %d kas dla %d klientow)", 
-                        i + 1, wymagane, liczba_klientow);
-                ZapiszLog(LOG_INFO, buf_log);
-            }
-        }
-        stan->liczba_czynnych_kas_samo = aktualne;
-    }
-    //Zamknij nadmiarowe kasy (tylko wolne)
-    else if (wymagane < aktualne && aktualne > MIN_KAS_SAMO_CZYNNYCH) {
-        for (int i = LICZBA_KAS_SAMOOBSLUGOWYCH - 1; i >= 0 && aktualne > wymagane && aktualne > MIN_KAS_SAMO_CZYNNYCH; i--) {
-            if (stan->kasy_samo[i].stan == KASA_WOLNA) {
-                stan->kasy_samo[i].stan = KASA_ZAMKNIETA;
-                aktualne--;
-                sprintf(buf_log, "Kasa samoobslugowa [%d]: Zamknieta (wymagane: %d kas dla %d klientow)", 
-                        i + 1, wymagane, liczba_klientow);
-                ZapiszLog(LOG_INFO, buf_log);
-            }
-        }
-        stan->liczba_czynnych_kas_samo = aktualne;
-    }
-    
-    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 }
 
 //Obsluga klienta przy kasie samoobslugowej
@@ -153,51 +57,25 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
             ZapiszLogF(LOG_OSTRZEZENIE, "Kasa samoobslugowa [%d]: BLOKADA! Niezgodnosc wagi produktu.",
                     id_kasy + 1);
             
-            if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) return -3;
+            if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != 0) return -3;
             stan->kasy_samo[id_kasy].stan = KASA_ZABLOKOWANA;
             ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             
-            //Wyslanie zadania do pracownika obslugi przez FIFO
-            ZadanieObslugi zadanie;
-            zadanie.typ = ZADANIE_ODBLOKUJ_KASE;
-            zadanie.id_kasy = id_kasy;
-            zadanie.id_klienta = id_klienta;
-            zadanie.wiek_klienta = wiek;
-            WyslijZadanieObslugi(&zadanie);
-            
-            //Czekaj na odblokowanie przez pracownika
-            int timeout_blokady = 0;
-            //Ustawienie timeoutu (2s w teście, 30s normalnie)
-            int pozostaly_czas = (stan->tryb_testu == 1) ? 2 : MAX_CZAS_OCZEKIWANIA;
-            
-            while (pozostaly_czas > 0) {
-                //Sprawdz ewakuacje
-                if (stan->flaga_ewakuacji) {
-                    ZwolnijKase(id_kasy, stan, sem_id);
-                    return -3;  //Ewakuacja
+            //Wyslanie zadania do pracownika obslugi (MSGQ)
+            //Odblokowanie
+            if (WyslijZadanieObslugi(id_kasy, OP_ODBLOKOWANIE_KASY, 0) == 1) {
+                // Pracownik odblokowal
+                if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == 0) {
+                     stan->kasy_samo[id_kasy].stan = KASA_ZAJETA;
+                     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 }
-                
-                if (CzekajNaSemafor(sem_id, SEM_ODBLOKUJ_KASA_SAMO(id_kasy), 1) == 0) {
-                    //Otrzymano sygnal odblokowania
-                    break;
-                }
-                //Timeout - sprawdz czy uplynelo MAX_CZAS_OCZEKIWANIA
-                pozostaly_czas--;
-            }
-            
-            if (pozostaly_czas <= 0) {
-                ZapiszLogF(LOG_BLAD, "Kasa samoobslugowa [%d]: Timeout! Pracownik nie podszedl w ciagu %d sek.",
-                        id_kasy + 1, MAX_CZAS_OCZEKIWANIA);
-                timeout_blokady = 1;
-            }
-            
-            //Jesli timeout, klient moze isc do stacjonarnej
-            if (timeout_blokady) {
+                ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Odblokowana przez pracownika obslugi.", id_kasy + 1);
+            } else {
+                //Timeout lub blad
+                ZapiszLogF(LOG_BLAD, "Kasa samoobslugowa [%d]: Timeout pracownika przy blokadzie.", id_kasy + 1);
                 ZwolnijKase(id_kasy, stan, sem_id);
-                return -1;  //Timeout - klient powinien isc do kasy stacjonarnej
+                return -1;
             }
-            
-            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Odblokowana przez pracownika obslugi.", id_kasy + 1);
         }
     }
     
@@ -206,18 +84,12 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, int liczba_produktow
         ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Alkohol wykryty! Wzywam pracownika...",
                 id_kasy + 1);
         
-        //Wyslanie zadania weryfikacji wieku przez FIFO
-        ZadanieObslugi zadanie;
-        zadanie.typ = ZADANIE_WERYFIKUJ_WIEK;
-        zadanie.id_kasy = id_kasy;
-        zadanie.id_klienta = id_klienta;
-        zadanie.wiek_klienta = wiek;
-        WyslijZadanieObslugi(&zadanie);
+        int wynik_weryfikacji = WyslijZadanieObslugi(id_kasy, OP_WERYFIKACJA_WIEKU, wiek);
         
-        //Krotkie oczekiwanie na weryfikacje
-        SYMULACJA_USLEEP(stan, 500000); //500ms
-        
-        if (wiek < 18) {
+        if (wynik_weryfikacji == -1) {
+            ZapiszLogF(LOG_OSTRZEZENIE, "Kasa samoobslugowa [%d]: Blad komunikacji z pracownikiem (ewakuacja?)", id_kasy + 1);
+            return -3; // Traktuj jako blad techniczny/ewakuacje
+        } else if (wynik_weryfikacji == 0) {
             ZapiszLogF(LOG_BLAD, "Kasa samoobslugowa [%d]: ODMOWA! Klient [ID: %d] niepelnoletni (wiek: %d)",
                     id_kasy + 1, id_klienta, wiek);
             return -2;
@@ -260,31 +132,62 @@ int main(int argc, char* argv[]) {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGQUIT, &sa, NULL);  // SIGQUIT jako alias dla SIGTERM
     
     srand(time(NULL) ^ getpid());
     
     ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Proces uruchomiony.", id_kasy + 1);
     
-    //Glowna petla - proces monitorujacy, uzywa semtimedop z timeoutem
+    //Pobierz kolejke komunikatow (DEDYKOWANA DLA SAMOOBSLUGI)
+    int msg_id = msgget(KLUCZ_KOLEJKI, 0600);
+    if (msg_id == -1) {
+        ZapiszLogF(LOG_BLAD, "Kasa samoobslugowa [%d]: Blad dolaczenia do kolejki komunikatow!", id_kasy + 1);
+        OdlaczPamiecWspoldzielona(stan_sklepu);
+        return 1;
+    }
+
+    //Glowna petla - Worker przetwarzajacy zgloszenia z kolejki (typ=3)
     while (1) {
-        //Reaguj TYLKO na SIGTERM, nie na flaga_ewakuacji
-        if (g_sygnal_wyjscia) {
-            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Otrzymano SIGTERM - koncze prace.", id_kasy + 1);
+        //Reaguj na SIGTERM lub flage ewakuacji
+        if (CZY_KONCZYC(stan_sklepu)) {
+            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Otrzymano sygnal zakonczenia - koncze prace.", id_kasy + 1);
             break;
         }
         
-        //Sprawdzenie stanu kasy
-        if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == -2) break;
-        StanKasy stan_kasy = stan_sklepu->kasy_samo[id_kasy].stan;
-        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        //Czekaj na klienta (typ=3)
+        Komunikat msg;
+        //Rozmiar danych bez mtype
+        size_t msg_size = sizeof(Komunikat) - sizeof(long);
         
-        //Kasa jest wolna - aktualizuj liczbe kas
-        if (stan_kasy == KASA_WOLNA) {
-            AktualizujLiczbeKas(stan_sklepu, sem_id);
+        if (msgrcv(msg_id, &msg, msg_size, 3, 0) != -1) {
+            //Jest klient
+            int id_klienta = msg.id_klienta;
+            
+            //Zajmij kase (dla statystyk i wizualizacji)
+            ZajmijKase(id_kasy, id_klienta, stan_sklepu, sem_id);
+            
+            //Obsluz klienta (logika przeniesiona z klienta do kasy)
+            int wynik = ObsluzKlientaSamoobslugowo(id_kasy, id_klienta, msg.liczba_produktow, 
+                                                   msg.suma_koszyka, msg.ma_alkohol, msg.wiek,
+                                                   stan_sklepu, sem_id);
+            
+            //Wyslij wynik do klienta (mtype = 100 + id_klienta)
+            //W polu id_klienta przesylamy KOD WYNIKU (0=OK, inne=Blad)
+            Komunikat res;
+            res.mtype = 100 + id_klienta;
+            res.id_klienta = wynik; 
+            res.liczba_produktow = id_kasy; // Zwracamy ID kasy zebys klient wiedzial gdzie byl
+            msgsnd(msg_id, &res, msg_size, 0);
+            
+            //Zwolnij kase
+            ZwolnijKase(id_kasy, stan_sklepu, sem_id);
+            
+        } else {
+             if (errno == EINTR) continue;
+             perror("Kasa Samoobslugowa msgrcv error");
+             ZapiszLogF(LOG_BLAD, "Kasa Samoobslugowa [%d]: Blad msgrcv (errno=%d)", id_kasy + 1, errno);
+             break;
         }
-        
-        //Oczekiwanie na sygnal przez semafor IPC (zamiast pause+alarm)
-        CzekajNaSygnal(sem_id);
     }
     
     OdlaczPamiecWspoldzielona(stan_sklepu);
