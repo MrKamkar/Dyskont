@@ -97,30 +97,35 @@ void PokazStatusKas(StanSklepu* stan, int sem_id) {
     ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     printf("\n--- STATUS KAS ---\n");
-    printf("Klientow w sklepie: %d\n\n", stan->liczba_klientow_w_sklepie);
+    printf("Klientow w sklepie: %u\n\n", stan->liczba_klientow_w_sklepie);
     
     printf("KASY STACJONARNE:\n");
     for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
         const char* status;
         switch (stan->kasy_stacjonarne[i].stan) {
-            case KASA_ZAMKNIETA: status = "ZAMKNIETA"; break;
-            case KASA_WOLNA: status = "CZYNNA"; break;
-            case KASA_ZAJETA: status = "CZYNNA"; break;
-            case KASA_ZABLOKOWANA: status = "ZABLOKOWANA"; break;
-            case KASA_ZAMYKANA: status = "ZAMYKANA"; break;
+            case KASA_ZAMKNIETA:
+                status = "ZAMKNIETA";
+                break;
+            case KASA_WOLNA:
+            case KASA_ZAJETA:
+                status = "CZYNNA";
+                break;
+            case KASA_ZAMYKANA: 
+                status = "ZAMYKANA";
+                break;
             default: status = "NIEZNANY";
         }
-        printf("  Kasa %d: %s (w kolejce: %d)\n", 
-               i + 1, status, stan->kasy_stacjonarne[i].liczba_w_kolejce);
+        printf("  Kasa %d: %s (w kolejce: %u/%u)\n", 
+               i + 1, status, stan->kasy_stacjonarne[i].liczba_w_kolejce, MAX_KOLEJKA_STACJONARNA);
     }
     
     printf("\nKASY SAMOOBSLUGOWE:\n");
-    int czynne = 0;
+    int zajete = 0;
     for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-        if (stan->kasy_samo[i].stan != KASA_ZAMKNIETA) czynne++;
+        if (stan->kasy_samo[i].stan == KASA_ZAJETA) zajete++;
     }
-    printf("  Czynnych: %d/%d\n", czynne, LICZBA_KAS_SAMOOBSLUGOWYCH);
-    printf("  W kolejce: %d\n", stan->liczba_w_kolejce_samo);
+    printf("  Zajętych: %d/%d\n", zajete, stan->liczba_czynnych_kas_samo);
+    printf("  W kolejce: %u/%u\n", stan->liczba_w_kolejce_samoobslugowej, MAX_KOLEJKA_SAMOOBSLUGOWA);
     
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     printf("------------------\n");

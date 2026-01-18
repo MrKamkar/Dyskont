@@ -20,12 +20,12 @@ typedef enum {
 //Główna struktura klienta
 typedef struct {
     int id;
-    int wiek;
+    unsigned int wiek;
     
     //Koszyk (tabela o stałym rozmiarze ustalonym przy wejściu)
     Produkt* koszyk;
-    int liczba_produktow;  //Aktualnie w koszyku
-    int ilosc_planowana;   //Ile zamierza kupić (rozmiar bufora)
+    unsigned int liczba_produktow;  //Aktualnie w koszyku
+    unsigned int ilosc_planowana;   //Ile zamierza kupić (rozmiar bufora)
     
     //Czas
     time_t czas_dolaczenia_do_kolejki;

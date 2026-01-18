@@ -34,7 +34,7 @@ typedef struct {
 } Produkt;
 
 //Maksymalne rozmiary kolejek
-#define MAX_KOLEJKA_SAMO 30
+#define MAX_KOLEJKA_SAMOOBSLUGOWA 30
 #define MAX_KOLEJKA_STACJONARNA 10
 #define MAX_PRODUKTOW 50
 
@@ -50,6 +50,7 @@ typedef struct {
 #define KLIENCI_NA_KASE 5  //Parametr K z opisu
 #define MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE 1000  //Domyslna wartosc
 #define PRZERWA_MIEDZY_KLIENTAMI_MS 500 //Przerwa miedzy klientami
+#define CZAS_OCZEKIWANIA_T 5  //Czas oczekiwania w sekundach, po ktorym klient moze przejsc do kasy stacjonarnej
 
 //Makro do symulacyjnych usleep - pomija sleep gdy tryb_testu == 1
 #define SYMULACJA_USLEEP(stan, us) if ((stan)->tryb_testu == 0) usleep(us);
@@ -59,7 +60,6 @@ typedef enum {
     KASA_ZAMKNIETA,
     KASA_WOLNA,
     KASA_ZAJETA,
-    KASA_ZABLOKOWANA,
     KASA_ZAMYKANA
 } StanKasy;
 
@@ -74,15 +74,14 @@ typedef struct {
 typedef struct {
     StanKasy stan;
     int id_klienta;                  //ID obslugiwanego klienta
-    int liczba_w_kolejce;            //Liczba osob czekajacych
-    int kolejka[MAX_KOLEJKA_STACJONARNA]; //ID klientow w kolejce
+    unsigned int liczba_w_kolejce;   //Liczba osob czekajacych
     time_t czas_ostatniej_obslugi;   //Dla mechanizmu auto-zamykania
 } KasaStacjonarna;
 
 //Produkt z stanem magazynowym
 typedef struct {
     Produkt produkt;      //Dane produktu (nazwa, cena, kategoria, waga)
-    int ilosc;            //Liczba sztuk w magazynie
+    unsigned int ilosc;   //Liczba sztuk w magazynie
 } ProduktMagazyn;
 
 //Glowna struktura stanu sklepu w pamieci wspoldzielonej
@@ -90,18 +89,16 @@ typedef struct {
     //Kasy
     KasaSamoobslugowa kasy_samo[LICZBA_KAS_SAMOOBSLUGOWYCH];
     KasaStacjonarna kasy_stacjonarne[LICZBA_KAS_STACJONARNYCH];
-    
-    //Kolejka do kas samoobslugowych (wspolna)
-    int kolejka_samo[MAX_KOLEJKA_SAMO];
-    int liczba_w_kolejce_samo;
+
+    unsigned int liczba_w_kolejce_samoobslugowej; //Licba klientow w kolejce do kasy samoobslugowej
     
     //Liczniki
-    int liczba_klientow_w_sklepie;
-    int liczba_czynnych_kas_samo;
+    unsigned int liczba_klientow_w_sklepie;
+    unsigned int liczba_czynnych_kas_samo;
     
     //Baza produktow sklepu
     ProduktMagazyn magazyn[MAX_PRODUKTOW];
-    int liczba_produktow;
+    unsigned int liczba_produktow;
     
     //Flagi kontrolne
     int flaga_ewakuacji; //Sygnal 3 od kierownika
@@ -118,7 +115,7 @@ typedef struct {
     int tryb_testu;
     
     //Maksymalna liczba klientow rownoczesnie w sklepie
-    int max_klientow_rownoczesnie;
+    unsigned int max_klientow_rownoczesnie;
 } StanSklepu;
 
 //Funkcje zarzadzajace pamiecia wspoldzielona

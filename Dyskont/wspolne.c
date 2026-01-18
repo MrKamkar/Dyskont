@@ -38,20 +38,7 @@ int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_
     return 0;
 }
 
-//Usuwa element z kolejki tablicowej
-int UsunZKolejki(int* kolejka, int* liczba, int wartosc_do_usuniecia) {
-    for (int i = 0; i < *liczba; i++) {
-        if (kolejka[i] == wartosc_do_usuniecia) {
-            //Przesuniecie reszty kolejki
-            for (int j = i; j < *liczba - 1; j++) {
-                kolejka[j] = kolejka[j + 1];
-            }
-            (*liczba)--;
-            return 1;  //Znaleziono i usunieto
-        }
-    }
-    return 0;  //Nie znaleziono
-}
+
 
 //Blokujace czekanie na semafor z timeoutem
 int CzekajNaSemafor(int sem_id, int sem_num, int sek_timeout) {
@@ -64,15 +51,18 @@ int CzekajNaSemafor(int sem_id, int sem_num, int sek_timeout) {
     return -1;
 }
 
-//Blokujace czekanie z timeoutem 1s
+//Blokujace czekanie na semafor (przerywane przerwaniami)
 int CzekajNaSygnal(int sem_id) {
-    struct timespec timeout = {1, 0};
-    struct sembuf op = {SEM_CZEKAJ_SYGNAL, -1, 0};
+     struct sembuf op = {SEM_CZEKAJ_SYGNAL, -1, 0};
     
-    int wynik = semtimedop(sem_id, &op, 1, &timeout);
+    //Czekaj w nieskonczonosc na semaforze.
+    int wynik = semop(sem_id, &op, 1);
     
-    if (wynik == 0) {
-        ZwolnijSemafor(sem_id, SEM_CZEKAJ_SYGNAL);
+    //Jezeli przerwano przez sygnal - to oczekiwane zachowanie
+    if (wynik == -1 && errno == EINTR) {
+        return 0;
     }
-    return 0;
+    
+    //Inne bledy
+    return wynik;
 }

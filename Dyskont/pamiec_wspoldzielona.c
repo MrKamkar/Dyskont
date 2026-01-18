@@ -123,7 +123,8 @@ void WyczyscStanSklepu(StanSklepu* stan) {
 
     //Inicjalizacja kas samoobslugowych
     for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-        stan->kasy_samo[i].stan = KASA_WOLNA;
+        if (i < MIN_KAS_SAMO_CZYNNYCH) stan->kasy_samo[i].stan = KASA_WOLNA;
+        else stan->kasy_samo[i].stan = KASA_ZAMKNIETA;
         stan->kasy_samo[i].id_klienta = -1;
         stan->kasy_samo[i].czas_rozpoczecia = 0;
     }
@@ -137,10 +138,7 @@ void WyczyscStanSklepu(StanSklepu* stan) {
     }
 
     //Inicjalizacja kolejki samoobslugowej
-    stan->liczba_w_kolejce_samo = 0;
-    for (int i = 0; i < MAX_KOLEJKA_SAMO; i++) {
-        stan->kolejka_samo[i] = -1;
-    }
+    stan->liczba_w_kolejce_samoobslugowej = 0;
 
     //Inicjalizacja licznikow
     stan->liczba_klientow_w_sklepie = 0;
@@ -151,7 +149,7 @@ void WyczyscStanSklepu(StanSklepu* stan) {
 
     //Inicjalizacja bazy produktow
     stan->liczba_produktow = sizeof(DANE_PRODUKTOW) / sizeof(DANE_PRODUKTOW[0]);
-    for (int i = 0; i < stan->liczba_produktow; i++) {
+    for (unsigned int i = 0; i < stan->liczba_produktow; i++) {
         stan->magazyn[i].produkt = DANE_PRODUKTOW[i].dane;
         stan->magazyn[i].ilosc = DANE_PRODUKTOW[i].ilosc_poczatkowa;
     }

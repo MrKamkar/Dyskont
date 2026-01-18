@@ -12,6 +12,7 @@
 #include "pracownik_obslugi.h"
 #include "kasjer.h"
 #include "wspolne.h"
+#include "kasa_samoobslugowa.h"
 
 //Globalne zmienne dla czyszczenia zasobow
 static StanSklepu* g_stan_sklepu = NULL;
@@ -20,7 +21,7 @@ static int g_msg_id = -1;           // ID wspólnej kolejki komunikatów
 static char g_sciezka[256];
 
 //Globalne zmienne dla obslugi SIGCHLD
-static int g_aktywnych_klientow = 0; // Teraz zwykly int, modyfikowany tylko w main
+static unsigned int g_aktywnych_klientow = 0; // Liczba aktywnych klientow, modyfikowany tylko w main
 static volatile sig_atomic_t g_calkowita_liczba_klientow = 0;
 static int g_is_parent = 1; // Flaga oznaczajaca glowny proces (do czyszczenia)
 static volatile sig_atomic_t g_zadanie_zamkniecia = 0; // Flaga prosba o zamkniecie (Ctrl+C)
@@ -51,8 +52,48 @@ void ObslugaSIGCHLD(int sig) {
 void AktualizujLicznikKlientow() {
     char buf[128];
     ssize_t bytes_read;
+    //Non-blocking read - cleans the pipe
     while ((bytes_read = read(g_pipe_fd[0], buf, sizeof(buf))) > 0) {
-        g_aktywnych_klientow -= bytes_read;
+        unsigned int do_odjecia = (unsigned int)bytes_read;
+        if (do_odjecia > g_aktywnych_klientow) {
+            //Zabezpieczenie przed underflow - nie moze byc ujemnych klientow
+            g_aktywnych_klientow = 0;
+        } else {
+            g_aktywnych_klientow -= do_odjecia;
+        }
+        
+        //Logging event (optional, but good for tracing flow without polling status)
+        //char log[64]; sprintf(log, "Klient wyszedl. Aktywnych: %d", g_aktywnych_klientow); ZapiszLog(LOG_INFO, log);
+    }
+}
+
+//Funkcja czekajaca na zmiany w pipe (z timeoutem)
+//timeout_sec < 0 oznacza czekanie w nieskonczonosc
+//Zwraca 1 jesli cos przyszlo, 0 jesli timeout, -1 jesli blad
+int CzekajNaZdarzenieIPC(int timeout_sec) {
+    fd_set readfds;
+    struct timeval tv;
+    struct timeval* ptv = NULL;
+    
+    FD_ZERO(&readfds);
+    FD_SET(g_pipe_fd[0], &readfds);
+    
+    if (timeout_sec >= 0) {
+        tv.tv_sec = timeout_sec;
+        tv.tv_usec = 0;
+        ptv = &tv;
+    }
+    
+    //Czekamy na dane w pipe (czyli zgon dziecka) LUB sygnal LUB timeout
+    //To jest operacja BLOKUJACA (spi w kernelu)
+    int retval = select(g_pipe_fd[0] + 1, &readfds, NULL, NULL, ptv);
+    
+    if (retval > 0) {
+        return 1; //Jest dane
+    } else if (retval == 0) {
+        return 0; //Timeout
+    } else {
+        return -1; //Blad/Sygnal
     }
 }
 
@@ -70,10 +111,23 @@ void ObslugaSIGUSR1(int sig) {
         //Sygnal dla kasjera - kasa otwarta
         ZwolnijSemafor(g_sem_id, SEM_OTWORZ_KASA_STACJ_2);
         
-        ZapiszLog(LOG_INFO, "Kierownik: Sygnal SIGUSR1 - otwarto kase stacjonarna 2.");
+        //Pobierz liczniki kolejek (dla wyswietlania)
+        unsigned int kol1 = 0, kol2 = 0; //, kol_samo = 0;
+        if (g_stan_sklepu) {
+            ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+            kol1 = g_stan_sklepu->kasy_stacjonarne[0].liczba_w_kolejce;
+            kol2 = g_stan_sklepu->kasy_stacjonarne[1].liczba_w_kolejce;
+            ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        }
+
+        char buf[256];
+        
+        sprintf(buf, "Kierownik: Sygnal SIGUSR1 - otwarto kase stacjonarna 2. Klienci: %d (Kolejki: K1=%u, K2=%u)",
+                (int)g_aktywnych_klientow, kol1, kol2);
+        ZapiszLog(LOG_INFO, buf);
         
         //Migracja klientow z kasy 1 do kasy 2
-        MigrujKlientowDoKasy2(g_stan_sklepu, g_sem_id);
+        MigrujKlientowDoKasy2(g_stan_sklepu, g_sem_id, g_msg_id);
     } else {
         ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: Kasa 2 jest juz otwarta.");
@@ -103,17 +157,12 @@ void ObslugaSIGUSR2(int sig) {
 void ObslugaSIGTERM(int sig) {
     (void)sig;
     if (!g_stan_sklepu) return;
-    
-    //Ustaw flagi bez blokowania mutexow (async-signal-safe)
+
     g_stan_sklepu->flaga_ewakuacji = 1;
     g_stan_sklepu->polecenie_kierownika = 3;  //POLECENIE_EWAKUACJA
-    
-    //Nie uzywamy ZapiszLog bo uzywa mutexow/streamow - niebezpieczne w handlerze
-    //const char* msg = "Kierownik: Otrzymano sygnał ewakuacji.\n";
-    //write(STDERR_FILENO, msg, 40);
 }
 
-//Handler sygnalu SIGINT, czyszczenie zasobow
+
 //Handler sygnalu SIGINT, czyszczenie zasobow
 void ObslugaSIGINT(int sig) {
     (void)sig;
@@ -121,16 +170,9 @@ void ObslugaSIGINT(int sig) {
     if (g_stan_sklepu) {
         g_stan_sklepu->flaga_ewakuacji = 1; //To przerwie petle CzekajNaSygnal w semafory.c
     }
-    
-    //Ustaw flage zamkniecia (async-signal-safe)
-    g_zadanie_zamkniecia = 1;
-    
-    //Wyslij SIGTERM do calej grupy procesow (0) - to obudzi spiace dzieci (usleep)
-    //To jest ryzykowne (main tez dostanie), ale konieczne dla natychmiastowej reakcji spiacych dzieci.
-    //Main musi byc odporny na SIGTERM (handler ustawia tylko flagi).
-    kill(0, SIGTERM);
 
-    //KONIEC - main loop wyjdzie, cleanup wykona sie w main
+    g_zadanie_zamkniecia = 1;
+    kill(0, SIGTERM);
 }
 
 int main(int argc, char* argv[]) {
@@ -175,21 +217,30 @@ int main(int argc, char* argv[]) {
     }
     
     //Opcjonalny limit klientow rownoczesnie (domyslnie 1000)
-    int max_klientow = MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE;
+    unsigned int max_klientow = MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE;
     if (argc >= 4) {
         max_klientow = atoi(argv[3]);
         if (max_klientow <= 0) {
             fprintf(stderr, "Blad: Maksymalna liczba klientow musi byc wieksza od 0\n");
             return 1;
         }
+        if (max_klientow > 10000) {
+            fprintf(stderr, "Blad: Maksymalna liczba klientow to 10000 (ograniczenie systemowe)\n");
+            return 1;
+        }
     }
     
     //Zapis sciezki dla handlera sygnalu
     snprintf(g_sciezka, sizeof(g_sciezka), "%s", argv[0]);
-    
+
     //Rejestracja handlerow sygnalow
-    signal(SIGINT, ObslugaSIGINT);    //Ctrl+C: graceful shutdown
-    signal(SIGCHLD, ObslugaSIGCHLD);  //Automatycznie gdy dziecko sie konczy
+    struct sigaction sa;
+    sa.sa_handler = ObslugaSIGCHLD;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0; //Zero-Polling: Chcemy aby select() byl przerywany przez sygnaly
+    sigaction(SIGCHLD, &sa, NULL); 
+
+    signal(SIGINT, ObslugaSIGINT);    //Ctrl+C
     signal(SIGUSR1, ObslugaSIGUSR1);  //Otwieranie kasy 2
     signal(SIGUSR2, ObslugaSIGUSR2);  //Zamykanie kasy 1
     signal(SIGTERM, ObslugaSIGTERM);  //Ewakuacja
@@ -199,7 +250,7 @@ int main(int argc, char* argv[]) {
     //Inicjalizacja systemu logowania
     printf("=== Symulacja Dyskontu ===\n");
     printf("Czas symulacji: %d sekund\n", czas_symulacji);
-    printf("Max klientow rownoczesnie: %d\n", max_klientow);
+    printf("Max klientow rownoczesnie: %u\n", max_klientow);
     if (tryb_testu == 1) {
         printf("TRYB TESTU: Bez sleepow symulacyjnych\n");
     }
@@ -332,7 +383,7 @@ int main(int argc, char* argv[]) {
     }
     
     char buf[256];
-    sprintf(buf, "Symulacja bedzie trwac %d sekund. Max klientow rownoczesnie: %d", 
+    sprintf(buf, "Symulacja bedzie trwac %d sekund. Max klientow rownoczesnie: %u", 
             czas_symulacji, g_stan_sklepu->max_klientow_rownoczesnie);
     ZapiszLog(LOG_INFO, buf);
     
@@ -345,13 +396,11 @@ int main(int argc, char* argv[]) {
     ZapiszLog(LOG_INFO, "Rozpoczynam ciagla symulacje klientow...");
     
     
-    //Glowna petla symulacji
+    //Glowna petla symulacji - ZERO POLLING
     while (time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji && !g_zadanie_zamkniecia) {
         
-        //Tworz nowych klientow jesli jest miejsce
-        while (g_aktywnych_klientow < g_stan_sklepu->max_klientow_rownoczesnie && 
-               time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji && !g_zadanie_zamkniecia) {
-            
+        //Jeżeli mamy miejsce na klientów -> tworzymy
+        if (g_aktywnych_klientow < g_stan_sklepu->max_klientow_rownoczesnie) {
             pid_t pid = fork();
             
             if (pid == -1) {
@@ -365,35 +414,34 @@ int main(int argc, char* argv[]) {
                 char id_str[16];
                 sprintf(id_str, "%d", id_klienta + 1);
                 
-                //Drugi argument "0" to stworzony przez dyskont
                 execl("./klient", "klient", id_str, "0", (char*)NULL);
                 
                 perror("Blad exec()");
                 exit(1);
             }
             else {
-                //Aktualizuj licznik przed zwiekszeniem (odczytaj z potoku)
+                //Rodzic
                 AktualizujLicznikKlientow();
-                
-                g_aktywnych_klientow++; // Zwykle ++, bo jestesmy w main (synchronizacja przez pipe)
-
+                g_aktywnych_klientow++;
                 id_klienta++;
+
+                // --- DYNAMICZNE SKALOWANIE KAS SAMOOBSLUGOWYCH ---
+                ZaktualizujKasySamoobslugowe(g_stan_sklepu, g_sem_id, g_aktywnych_klientow);
                 
-                //Krotka przerwa miedzy tworzeniem procesow (pomijana w trybie testu)
+                //Krotka przerwa miedzy tworzeniem procesow
                 SYMULACJA_USLEEP(g_stan_sklepu, PRZERWA_MIEDZY_KLIENTAMI_MS * 1000);
             }
+        } 
+        else {
+            //Brak miejsca - czekamy na wyjscie klienta (blokujaco, bez pollingu)
+            //Czekamy na zdarzenie w pipe (wyjscie klienta)
+            CzekajNaZdarzenieIPC(-1); //Infinite wait
+            AktualizujLicznikKlientow();
+            ZaktualizujKasySamoobslugowe(g_stan_sklepu, g_sem_id, g_aktywnych_klientow);
         }
         
-        //Regularna aktualizacja licznika z potoku
+        //Sprawdzamy pipe przy kazdej okazji
         AktualizujLicznikKlientow();
-        
-        //Wyswietlanie statusu co 1 sekunde
-        time_t teraz = time(NULL);
-        sprintf(buf, "Symulacja: %ld/%d sek, klientow aktywnych: %d, utworzono: %d",
-                teraz - czas_startu, czas_symulacji, (int)g_aktywnych_klientow, id_klienta);
-        ZapiszLog(LOG_INFO, buf);
-        
-        CzekajNaSygnal(g_sem_id);
     }
     
     //Sprawdz czy to bylo Ctrl+C czy koniec czasu
@@ -411,7 +459,7 @@ int main(int argc, char* argv[]) {
     kill(0, SIGTERM);          //Wyslij do calej grupy procesow
     signal(SIGTERM, ObslugaSIGTERM);  //Przywroc handler
     
-    sprintf(buf, "Koniec symulacji - ewakuacja. Czekam na %d klientow...", (int)g_aktywnych_klientow);
+    sprintf(buf, "Koniec symulacji - ewakuacja. Czekam na %u klientow...", g_aktywnych_klientow);
     ZapiszLog(LOG_INFO, buf);
     
     //Czekaj na klientow - maja teraz flage ewakuacji
@@ -420,11 +468,11 @@ int main(int argc, char* argv[]) {
     
     while (g_aktywnych_klientow > 0 && (time(NULL) - czas_oczekiwania_start) < timeout_klientow) {
         AktualizujLicznikKlientow();
-        CzekajNaSygnal(g_sem_id);
+        CzekajNaZdarzenieIPC(1); //Wait 1s max to check loop condition (timeout check)
     }
     
     if (g_aktywnych_klientow > 0) {
-        sprintf(buf, "Timeout! Pozostalo %d klientow, wymuszam ewakuacje.", (int)g_aktywnych_klientow);
+        sprintf(buf, "Timeout! Pozostalo %u klientow, wymuszam ewakuacje.", g_aktywnych_klientow);
         ZapiszLog(LOG_OSTRZEZENIE, buf);
         
         //Ponownie wyslij SIGTERM do wszystkich procesow potomnych
@@ -435,7 +483,8 @@ int main(int argc, char* argv[]) {
         ZapiszLog(LOG_INFO, "Czekam 5s na zakonczenie klientow po ewakuacji...");
         time_t start_ewak = time(NULL);
         while (g_aktywnych_klientow > 0 && (time(NULL) - start_ewak) < 5) {
-            CzekajNaSygnal(g_sem_id);
+            AktualizujLicznikKlientow();
+            CzekajNaZdarzenieIPC(1);
         }
         
         if (g_aktywnych_klientow > 0) {
@@ -504,7 +553,7 @@ int main(int argc, char* argv[]) {
         }
         
         if (procesy_pozostale > 0) {
-            CzekajNaSygnal(g_sem_id);
+            CzekajNaZdarzenieIPC(1);
         }
     }
     

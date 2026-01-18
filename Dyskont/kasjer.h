@@ -30,6 +30,6 @@ void UsunKasjera(Kasjer* kasjer);
 void ObsluzKlienta(Kasjer* kasjer, int id_klienta, int liczba_produktow, double suma, StanSklepu* stan);
 
 //Migracja klientow z kasy 1 do kasy 2 (przy otwarciu kasy 2)
-int MigrujKlientowDoKasy2(StanSklepu* stan, int sem_id);
+int MigrujKlientowDoKasy2(StanSklepu* stan, int sem_id, int msg_id);
 
 #endif

@@ -29,9 +29,9 @@ int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek) {
         return -1; // Blad
     }
     
-    // Czekaj na odpowiedz (kanal 2000 + id_kasy)
+    // Czekaj na odpowiedz (kanal MSG_RES_PRACOWNIK_BASE + id_kasy)
     Komunikat res;
-    if (msgrcv(msg_id, &res, size, 2000 + id_kasy, 0) == -1) {
+    if (msgrcv(msg_id, &res, size, MSG_RES_PRACOWNIK_BASE + id_kasy, 0) == -1) {
         if (errno != EINTR) perror("Pracownik helper msgrcv");
         return -1; // Blad
     }
@@ -99,9 +99,9 @@ int main() {
                 wynik = 1;
             }
             
-            // Odeslij wynik (Kanal 2000 + ID kasy)
+            // Odeslij wynik (Kanal MSG_RES_PRACOWNIK_BASE + ID kasy)
             Komunikat res;
-            res.mtype = 2000 + id_kasy_nadawcy;
+            res.mtype = MSG_RES_PRACOWNIK_BASE + id_kasy_nadawcy;
             res.operacja = wynik;
             res.liczba_produktow = id_kasy_nadawcy;
             // Reszta zer

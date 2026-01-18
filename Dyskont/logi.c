@@ -164,9 +164,8 @@ void ZapiszLog(TypLogu typ_logu, const char* format) {
     strncpy(msg.tresc, format, 127);
     msg.tresc[127] = '\0';
 
-    //Wyslanie do kolejki bez blokowania
-    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), IPC_NOWAIT);
-    //Bledy ignorowane - kolejka moze byc usunieta podczas zamykania
+    //Wyslanie do kolejki BLOKUJACE
+    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0);
 }
 
 void ZapiszLogF(TypLogu typ_logu, const char* format, ...) {
@@ -181,5 +180,6 @@ void ZapiszLogF(TypLogu typ_logu, const char* format, ...) {
     vsnprintf(msg.tresc, sizeof(msg.tresc), format, args);
     va_end(args);
 
-    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), IPC_NOWAIT);
+    //Wyslanie do kolejki BLOKUJACE
+    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0);
 }

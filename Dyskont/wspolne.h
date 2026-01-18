@@ -23,26 +23,29 @@ void ObslugaSygnaluWyjscia(int sig);
 //Inicjalizacja procesu pochodnego (pamiec, semafory, logowanie)
 int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_procesu);
 
-//Usuwa element z kolejki tablicowej i przesuwa pozostale elementy
-int UsunZKolejki(int* kolejka, int* liczba, int wartosc_do_usuniecia);
-
 #define MSG_TYPE_KASA_1 1
 #define MSG_TYPE_KASA_2 2
 #define MSG_TYPE_SAMOOBSLUGA 3
 #define MSG_TYPE_PRACOWNIK 4
+
+//Kanal odpowiedzi
+#define MSG_RES_SAMOOBSLUGA_BASE 10000
+#define MSG_RES_STACJONARNA_BASE 20000
+#define MSG_RES_PRACOWNIK_BASE   30000
 
 //Kody operacji dla pracownika
 #define OP_WERYFIKACJA_WIEKU 1
 #define OP_ODBLOKOWANIE_KASY 2
 
 typedef struct {
-    long mtype;       // Typ komunikatu: 1=Do Kasy 1, 2=Do Kasy 2, 3=Do Samoobslugi, 4=Do Pracownika, (100+ID)=Do Klienta
-    int id_klienta;   // Dane: ID klienta
-    int liczba_produktow;
+    long mtype;       //Typ komunikatu
+    int id_klienta;   //ID klienta
+    unsigned int liczba_produktow;
     double suma_koszyka;
     int ma_alkohol;
-    int wiek;
-    int operacja;     // Typ zlecenia dla pracownika
+    unsigned int wiek;
+    int operacja;     //Typ zlecenia dla pracownika
+    time_t timestamp; //Znacznik czasu wyslania (dla wykrywania zombie)
 } Komunikat;
 
 //Blokujace czekanie na semafor z timeoutem

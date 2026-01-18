@@ -21,7 +21,8 @@ static key_t GenerujKlucz() {
 
 //Operacja na semaforze - blokujaca z mozliwoscia przerwania przy ewakuacji
 static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
-    struct sembuf operacja = { sem_num, wartosc, 0 };
+    //SEM_UNDO - wazne! Jesli proces zginie trzymajac semafor, system go cofnie
+    struct sembuf operacja = { sem_num, wartosc, SEM_UNDO };
     
     while (1) {
         if (g_stan_ewakuacji && CZY_KONCZYC(g_stan_ewakuacji)) {
@@ -63,18 +64,18 @@ int InicjalizujSemafory() {
     
     //Mutexy binarne (wartosc 1 = wolny)
     wartosci[MUTEX_PAMIEC_WSPOLDZIELONA] = 1;
-    wartosci[MUTEX_KOLEJKA_SAMO] = 1;
     wartosci[MUTEX_KASA_STACJONARNA_1] = 1;
     wartosci[MUTEX_KASA_STACJONARNA_2] = 1;
-    
-    //Semafory zliczajace
-    wartosci[SEM_KLIENCI_KOLEJKA_1] = 0;   //Brak klientow na start
-    wartosci[SEM_KLIENCI_KOLEJKA_2] = 0;   //Brak klientow na start
     
     //Semafory sygnalizacyjne (wartosc 0 = brak sygnalu)
     wartosci[SEM_OTWORZ_KASA_STACJ_1] = 0;
     wartosci[SEM_OTWORZ_KASA_STACJ_2] = 0;
     wartosci[SEM_CZEKAJ_SYGNAL] = 0;
+    
+    //Semafory dla kas samoobslugowych (domyslnie zablokowane = 0)
+    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
+        wartosci[SEM_KASA_SAMO_0 + i] = 0;
+    }
     
     arg.array = wartosci;
     

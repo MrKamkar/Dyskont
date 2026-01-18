@@ -10,25 +10,30 @@
 #include "pamiec_wspoldzielona.h"
 
 //Indeksy semaforów w tablicy - MUTEXY BINARNE (wzajemne wykluczanie)
-#define MUTEX_PAMIEC_WSPOLDZIELONA 0  //Mutex chroniacy pamiec wspoldzielona
-#define MUTEX_KOLEJKA_SAMO         1  //Mutex chroniacy kolejke kas samoobslugowych
-#define MUTEX_KASA_STACJONARNA_1   2  //Mutex chroniacy kolejke kasy stacjonarnej 1
-#define MUTEX_KASA_STACJONARNA_2   3  //Mutex chroniacy kolejke kasy stacjonarnej 2
+#define MUTEX_PAMIEC_WSPOLDZIELONA 0 //Mutex chroniacy pamiec wspoldzielona
+#define MUTEX_KASA_STACJONARNA_1 1 //Mutex chroniacy kolejke kasy stacjonarnej 1
+#define MUTEX_KASA_STACJONARNA_2 2 //Mutex chroniacy kolejke kasy stacjonarnej 2
 
 //Indeksy semaforów w tablicy - SEMAFORY ZLICZAJACE (blokujace czekanie)
-#define SEM_KLIENCI_KOLEJKA_1    4  //Liczba klientow w kolejce kasy 1
-#define SEM_KLIENCI_KOLEJKA_2    5  //Liczba klientow w kolejce kasy 2
+//Usunieto stare semafory kolejek (teraz Message Queues)
 
 //Semafory sygnalizacyjne do eliminacji busy waiting
-#define SEM_OTWORZ_KASA_STACJ_1    6  //Sygnal otwarcia kasy stacjonarnej 1
-#define SEM_OTWORZ_KASA_STACJ_2    7  //Sygnal otwarcia kasy stacjonarnej 2
-#define SEM_CZEKAJ_SYGNAL          8  //Semafor do blokujacego czekania
+#define SEM_OTWORZ_KASA_STACJ_1 3 //Sygnal otwarcia kasy stacjonarnej 1
+#define SEM_OTWORZ_KASA_STACJ_2 4 //Sygnal otwarcia kasy stacjonarnej 2
+#define SEM_CZEKAJ_SYGNAL 5 //Semafor do blokujacego czekania
 
-#define SEM_LICZBA               9  //Calkowita liczba semaforow
+//Semafory dla poszczegolnych kas samoobslugowych (do usypiania/budzenia)
+#define SEM_KASA_SAMO_0 6
+#define SEM_KASA_SAMO_1 7
+#define SEM_KASA_SAMO_2 8
+#define SEM_KASA_SAMO_3 9
+#define SEM_KASA_SAMO_4 10
+#define SEM_KASA_SAMO_5 11
+
+#define SEM_LICZBA 12 //Calkowita liczba semaforow
 
 //Makra mapujace ID kasy na odpowiedni mutex/semafor
 #define MUTEX_KASY(id) ((id) == 0 ? MUTEX_KASA_STACJONARNA_1 : MUTEX_KASA_STACJONARNA_2)
-#define SEM_KLIENCI_KOLEJKA(id) ((id) == 0 ? SEM_KLIENCI_KOLEJKA_1 : SEM_KLIENCI_KOLEJKA_2)
 #define SEM_OTWORZ_KASA_STACJ(id) ((id) == 0 ? SEM_OTWORZ_KASA_STACJ_1 : SEM_OTWORZ_KASA_STACJ_2)
 
 //Struktura union wymagana przez semctl w niektórych systemach
