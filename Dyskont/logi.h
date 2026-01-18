@@ -27,10 +27,10 @@ typedef enum {
 #define KOLOR_ZOLTY "\033[33m"
 #define KOLOR_NIEBIESKI "\033[34m"
 
-//Typ komunikatu konczacego prace loggera (musi byc > 0)
+//Typ komunikatu konczacego prace loggera
 #define TYP_KONIEC 999
 
-//Struktura komunikatu wymagana przez msgsnd/msgrcv
+//Struktura komunikatu
 struct KomunikatLog {
     long typ_komunikatu;      //Odpowiednik mtype
     TypLogu typ_logu;         //Typ komunikatu logowania
@@ -39,7 +39,7 @@ struct KomunikatLog {
 
 //Funkcje zarzadzajace
 void InicjalizujSystemLogowania();
-void UruchomWatekLogujacy();  //Zmienione z procesu na watek
+void UruchomWatekLogujacy();
 void ZamknijSystemLogowania();
 
 //Funkcje logowania

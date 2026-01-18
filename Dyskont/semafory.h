@@ -9,34 +9,26 @@
 #include <errno.h>
 #include "pamiec_wspoldzielona.h"
 
-//Indeksy semaforów w tablicy - MUTEXY BINARNE (wzajemne wykluczanie)
-#define MUTEX_PAMIEC_WSPOLDZIELONA 0 //Mutex chroniacy pamiec wspoldzielona
-#define MUTEX_KASA_STACJONARNA_1 1 //Mutex chroniacy kolejke kasy stacjonarnej 1
-#define MUTEX_KASA_STACJONARNA_2 2 //Mutex chroniacy kolejke kasy stacjonarnej 2
+#define MUTEX_PAMIEC_WSPOLDZIELONA 0 //Mutex chroniacy dostep do pamieci wspoldzielonej
 
-//Indeksy semaforów w tablicy - SEMAFORY ZLICZAJACE (blokujace czekanie)
-//Usunieto stare semafory kolejek (teraz Message Queues)
+//Semafory sygnalizacyjne
+#define SEM_OTWORZ_KASA_STACJONARNA_1 1 //Sygnal otwarcia kasy stacjonarnej 1
+#define SEM_OTWORZ_KASA_STACJONARNA_2 2 //Sygnal otwarcia kasy stacjonarnej 2
 
-//Semafory sygnalizacyjne do eliminacji busy waiting
-#define SEM_OTWORZ_KASA_STACJ_1 3 //Sygnal otwarcia kasy stacjonarnej 1
-#define SEM_OTWORZ_KASA_STACJ_2 4 //Sygnal otwarcia kasy stacjonarnej 2
-#define SEM_CZEKAJ_SYGNAL 5 //Semafor do blokujacego czekania
+//Semafory do otwierania kas samoobslugowych
+#define SEM_KASA_SAMOOBSLUGOWA_0 3
+#define SEM_KASA_SAMOOBSLUGOWA_1 4
+#define SEM_KASA_SAMOOBSLUGOWA_2 5
+#define SEM_KASA_SAMOOBSLUGOWA_3 6
+#define SEM_KASA_SAMOOBSLUGOWA_4 7
+#define SEM_KASA_SAMOOBSLUGOWA_5 8
 
-//Semafory dla poszczegolnych kas samoobslugowych (do usypiania/budzenia)
-#define SEM_KASA_SAMO_0 6
-#define SEM_KASA_SAMO_1 7
-#define SEM_KASA_SAMO_2 8
-#define SEM_KASA_SAMO_3 9
-#define SEM_KASA_SAMO_4 10
-#define SEM_KASA_SAMO_5 11
+#define SEM_LICZBA 9 //Calkowita liczba semaforow
 
-#define SEM_LICZBA 12 //Calkowita liczba semaforow
+//Makra mapujace ID kasy na odpowiedni semafor
+#define SEM_OTWORZ_KASA_STACJONARNA(id) ((id) == 0 ? SEM_OTWORZ_KASA_STACJONARNA_1 : SEM_OTWORZ_KASA_STACJONARNA_2)
 
-//Makra mapujace ID kasy na odpowiedni mutex/semafor
-#define MUTEX_KASY(id) ((id) == 0 ? MUTEX_KASA_STACJONARNA_1 : MUTEX_KASA_STACJONARNA_2)
-#define SEM_OTWORZ_KASA_STACJ(id) ((id) == 0 ? SEM_OTWORZ_KASA_STACJ_1 : SEM_OTWORZ_KASA_STACJ_2)
-
-//Struktura union wymagana przez semctl w niektórych systemach
+//Struktura union wymagana przez semctl
 union semun {
     int val;                //Wartość dla SETVAL
     struct semid_ds *buf;   //Bufor dla IPC_STAT, IPC_SET
@@ -50,15 +42,12 @@ int InicjalizujSemafory();
 int DolaczSemafory();
 
 //Zajmuje semafor => zmniejsza wartosc o 1
-int ZajmijSemafor(int sem_id, int sem_num);
+int ZajmijSemafor(int sem_id, int sem_num, StanSklepu* stan);
 
 //Zwalnia semafor => zwieksza wartosc o 1
 int ZwolnijSemafor(int sem_id, int sem_num);
 
 //Usuwa semafory z systemu.
 int UsunSemafory(int sem_id);
-
-//Ustawia wskaznik pamieci wspoldzielonej dla sprawdzania ewakuacji
-void UstawPamiecDlaSemaforow(StanSklepu* stan);
 
 #endif

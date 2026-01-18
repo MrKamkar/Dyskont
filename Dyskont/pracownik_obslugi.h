@@ -3,8 +3,7 @@
 
 #include "wspolne.h"
 
-//Wysylanie zadania do pracownika (przez kase samoobslugowa) - IPC Message Queue
-//Zwraca 1 (OK) lub 0 (Odmowa/Blad)
+//Wysylanie zadania do pracownika obslugi przez kase samoobslugowa
 int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek);
 
 #endif

@@ -19,15 +19,14 @@ void WyswietlMenu() {
 void OtworzKase2(StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
     
     if (stan->kasy_stacjonarne[1].stan == KASA_ZAMKNIETA) {
         stan->kasy_stacjonarne[1].stan = KASA_WOLNA;
-        stan->kasy_stacjonarne[1].czas_ostatniej_obslugi = time(NULL);
         ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
-        //Sygnal dla kasjera - kasa otwarta
-        ZwolnijSemafor(sem_id, SEM_OTWORZ_KASA_STACJ_2);
+        //Sygnal dla kasjera ze kasa jest otwarta
+        ZwolnijSemafor(sem_id, SEM_OTWORZ_KASA_STACJONARNA_2);
         
         ZapiszLog(LOG_INFO, "Kierownik: Otwarto kase stacjonarna 2.");
         printf("Kasa stacjonarna 2 zostala otwarta.\n");
@@ -37,13 +36,13 @@ void OtworzKase2(StanSklepu* stan, int sem_id) {
     }
 }
 
-//Zamyka wskazana kase stacjonarna (obsluguje klientow przed zamknieciem)
+//Zamyka wskazana kase stacjonarna, niewpuszczajac nowych klientow
 void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
     if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_STACJONARNYCH) return;
     
     char buf[256];
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
     StanKasy aktualny_stan = stan->kasy_stacjonarne[id_kasy].stan;
     int w_kolejce = stan->kasy_stacjonarne[id_kasy].liczba_w_kolejce;
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
@@ -59,14 +58,15 @@ void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
         ZapiszLog(LOG_INFO, buf);
         printf("Kasa %d zostanie zamknieta po obsluzeniu %d klientow.\n", id_kasy + 1, w_kolejce);
         
-        //Ustawiamy polecenie, kasjer sam zamknie kase po obsluzeniu
-        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        //Ustawiamy polecenie, kasjer sam zamknie kase po obsluzeniu klientow w kolejce
+        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
         stan->polecenie_kierownika = POLECENIE_ZAMKNIJ_KASE;
         stan->id_kasy_do_zamkniecia = id_kasy;
         ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     } else {
+
         //Mozna zamknac od razu
-        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
         stan->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
         ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
@@ -76,17 +76,13 @@ void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
     }
 }
 
-//Wydaje polecenie ewakuacji
-void WydajPolecenie(int polecenie, int id_kasy, StanSklepu* stan, int sem_id) {
+//Wydaje polecenie
+void WydajPolecenie(PolecenieKierownika polecenie, int id_kasy, StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
     stan->polecenie_kierownika = polecenie;
     stan->id_kasy_do_zamkniecia = id_kasy;
-    
-    if (polecenie == POLECENIE_EWAKUACJA) {
-        stan->flaga_ewakuacji = 1;
-    }
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 }
 
@@ -94,7 +90,7 @@ void WydajPolecenie(int polecenie, int id_kasy, StanSklepu* stan, int sem_id) {
 void PokazStatusKas(StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
     
     printf("\n--- STATUS KAS ---\n");
     printf("Klientow w sklepie: %u\n\n", stan->liczba_klientow_w_sklepie);
@@ -124,7 +120,7 @@ void PokazStatusKas(StanSklepu* stan, int sem_id) {
     for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
         if (stan->kasy_samo[i].stan == KASA_ZAJETA) zajete++;
     }
-    printf("  Zajętych: %d/%d\n", zajete, stan->liczba_czynnych_kas_samo);
+    printf("  Zajętych: %d/%d\n", zajete, stan->liczba_czynnych_kas_samoobslugowych);
     printf("  W kolejce: %u/%u\n", stan->liczba_w_kolejce_samoobslugowej, MAX_KOLEJKA_SAMOOBSLUGOWA);
     
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
@@ -203,9 +199,10 @@ int main() {
                 break;
                 
             case 4:
-                printf("UWAGA: Czy na pewno chcesz oglosic ewakuacje? (1=tak, 0=nie): ");
+                printf("Czy na pewno chcesz oglosic ewakuacje? (1 => tak, 0 => nie): ");
                 int potwierdz;
                 if (scanf("%d", &potwierdz) == 1 && potwierdz == 1) {
+
                     //Wyslij sygnal SIGTERM, ewakuacja
                     if (kill(pid_glowny, SIGTERM) == 0) {
                         printf("Wyslano sygnal SIGTERM - EWAKUACJA!\n");

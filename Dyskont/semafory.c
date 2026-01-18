@@ -2,54 +2,29 @@
 #include "pamiec_wspoldzielona.h"
 #include "wspolne.h"
 
-//Globalny wskaznik do pamieci wspoldzielonej dla sprawdzania ewakuacji
-static StanSklepu* g_stan_ewakuacji = NULL;
 
-//Ustawia wskaznik pamieci wspoldzielonej dla sprawdzania ewakuacji
-void UstawPamiecDlaSemaforow(StanSklepu* stan) {
-    g_stan_ewakuacji = stan;
-}
 
-//Generowanie klucza dla semaforow
-static key_t GenerujKlucz() {
-    key_t klucz = ftok(IPC_SCIEZKA, 'M');
-    if (klucz == -1) {
-        perror("Blad generowania klucza dla semaforow");
-    }
-    return klucz;
-}
-
-//Operacja na semaforze - blokujaca z mozliwoscia przerwania przy ewakuacji
-static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
-    //SEM_UNDO - wazne! Jesli proces zginie trzymajac semafor, system go cofnie
+//Operacja na semaforze
+static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, StanSklepu* stan, const char* blad_msg) {
     struct sembuf operacja = { sem_num, wartosc, SEM_UNDO };
     
     while (1) {
-        if (g_stan_ewakuacji && CZY_KONCZYC(g_stan_ewakuacji)) {
-            return -2;
-        }
+        if (stan && CZY_KONCZYC(stan)) return -2; //Sprawdzenie czy semafor ma zostac usuniety
         
+        if (semop(sem_id, &operacja, 1) == 0) return 0;
         
-        if (semop(sem_id, &operacja, 1) == 0) {
-            return 0;  //Sukces
-        }
-        
-        //EINTR - przerwanie przez sygnal
-        if (errno == EINTR) {
-            continue;
-        }
+        //Przerwanie semafora sygnalem
+        if (errno == EINTR) continue;
         
         //Inny blad
-        if (errno != EINVAL && errno != EIDRM && errno != EINTR) {
-            perror(blad_msg);
-        }
+        if (errno != EINVAL && errno != EIDRM && errno != EINTR) perror(blad_msg);
         return -1;
     }
 }
 
 //Inicjalizacja zestawu semaforow
 int InicjalizujSemafory() {
-    key_t klucz = GenerujKlucz();
+    key_t klucz = GenerujKluczIPC(ID_IPC_SEMAFORY);
     if (klucz == -1) return -1;
 
     int sem_id = semget(klucz, SEM_LICZBA, IPC_CREAT | IPC_EXCL | 0600);
@@ -62,19 +37,16 @@ int InicjalizujSemafory() {
     union semun arg;
     unsigned short wartosci[SEM_LICZBA];
     
-    //Mutexy binarne (wartosc 1 = wolny)
+    //Mutexy binarne => 1 oznacza wolny do uzytku
     wartosci[MUTEX_PAMIEC_WSPOLDZIELONA] = 1;
-    wartosci[MUTEX_KASA_STACJONARNA_1] = 1;
-    wartosci[MUTEX_KASA_STACJONARNA_2] = 1;
     
-    //Semafory sygnalizacyjne (wartosc 0 = brak sygnalu)
-    wartosci[SEM_OTWORZ_KASA_STACJ_1] = 0;
-    wartosci[SEM_OTWORZ_KASA_STACJ_2] = 0;
-    wartosci[SEM_CZEKAJ_SYGNAL] = 0;
+    //Semafory sygnalizacyjne do otwierania kas stacjonarnych
+    wartosci[SEM_OTWORZ_KASA_STACJONARNA_1] = 0;
+    wartosci[SEM_OTWORZ_KASA_STACJONARNA_2] = 0;
     
-    //Semafory dla kas samoobslugowych (domyslnie zablokowane = 0)
+    //Semafory dla kas samoobslugowych
     for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-        wartosci[SEM_KASA_SAMO_0 + i] = 0;
+        wartosci[SEM_KASA_SAMOOBSLUGOWA_0 + i] = 0;
     }
     
     arg.array = wartosci;
@@ -90,7 +62,7 @@ int InicjalizujSemafory() {
 
 //Dolaczenie do istniejacych semaforow
 int DolaczSemafory() {
-    key_t klucz = GenerujKlucz();
+    key_t klucz = GenerujKluczIPC(ID_IPC_SEMAFORY);
     if (klucz == -1) return -1;
 
     int sem_id = semget(klucz, SEM_LICZBA, 0600);
@@ -102,14 +74,14 @@ int DolaczSemafory() {
     return sem_id;
 }
 
-//Zajmuje semafor (zmniejsza o 1)
-int ZajmijSemafor(int sem_id, int sem_num) {
-    return OperacjaSemafor(sem_id, sem_num, -1, "Blad zajmowania semafora");
+//Zajmuje semafor
+int ZajmijSemafor(int sem_id, int sem_num, StanSklepu* stan) {
+    return OperacjaSemafor(sem_id, sem_num, -1, stan, "Blad zajmowania semafora");
 }
 
-//Zwalnia semafor (zwieksza o 1)
+//Zwalnia semafor
 int ZwolnijSemafor(int sem_id, int sem_num) {
-    return OperacjaSemafor(sem_id, sem_num, 1, "Blad zwalniania semafora");
+    return OperacjaSemafor(sem_id, sem_num, 1, NULL, "Blad zwalniania semafora");
 }
 
 //Usuniecie zestawu semaforow

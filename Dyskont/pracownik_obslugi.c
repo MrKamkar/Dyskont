@@ -5,17 +5,17 @@
 #include <sys/msg.h>
 #include <errno.h>
 
-// Helper: Kasa Samoobslugowa uzywa tego do wyslania zlecenia
+//Wysylanie zadania do pracownika obslugi przez kase samoobslugowa
 int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek) {
-    int msg_id = msgget(KLUCZ_KOLEJKI, 0600);
+    int msg_id = msgget(GenerujKluczIPC(ID_IPC_KOLEJKA), 0600);
     if (msg_id == -1) {
         return -1;
     }
     
     Komunikat msg;
-    msg.mtype = MSG_TYPE_PRACOWNIK; // 4
+    msg.mtype = MSG_TYPE_PRACOWNIK; //4
     msg.operacja = typ_operacji;
-    msg.liczba_produktow = id_kasy; // ID Kasy jako nadawca (uzywajac pola int)
+    msg.liczba_produktow = id_kasy; //ID Kasy jako nadawca
     msg.wiek = wiek;
     msg.id_klienta = 0;
     msg.suma_koszyka = 0.0;
@@ -23,32 +23,34 @@ int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek) {
     
     size_t size = sizeof(Komunikat) - sizeof(long);
     
-    // Wyslij
+    //Wyslij do kolejki komunikatow
     if (msgsnd(msg_id, &msg, size, 0) == -1) {
         if (errno != EINTR) perror("Pracownik helper msgsnd");
-        return -1; // Blad
+        return -1;
     }
     
-    // Czekaj na odpowiedz (kanal MSG_RES_PRACOWNIK_BASE + id_kasy)
+    //Czekanie na odpowiedz pracownika
     Komunikat res;
     if (msgrcv(msg_id, &res, size, MSG_RES_PRACOWNIK_BASE + id_kasy, 0) == -1) {
         if (errno != EINTR) perror("Pracownik helper msgrcv");
-        return -1; // Blad
+        return -1;
     }
     
-    return res.operacja; // Zwracamy wynik z pola operacja
+    return res.operacja; //Zwracamy wynik z pola operacja (0 to niepowodzenie, 1 to powodzenie)
 }
 
 #ifdef PRACOWNIK_STANDALONE
 int main() {
+    //Inicjalizacja pamieci wspoldzielonej i semafora
     StanSklepu* stan_sklepu;
     int sem_id;
     
+    //Dolaczanie do pamieci wspoldzielonej
     if (InicjalizujProcesPochodny(&stan_sklepu, &sem_id, "Pracownik") == -1) {
         return 1;
     }
     
-    // Obsluga sygnalow
+    //Obsluga sygnalow
     struct sigaction sa;
     sa.sa_handler = ObslugaSygnaluWyjscia;
     sigemptyset(&sa.sa_mask);
@@ -58,8 +60,8 @@ int main() {
     
     ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na MSGQ...");
     
-    // Pobierz MsgQueue (DLA PRACOWNIKA)
-    int msg_id = msgget(KLUCZ_KOLEJKI, 0600);
+    //Dolaczanie do kolejki komunikatow
+    int msg_id = msgget(GenerujKluczIPC(ID_IPC_KOLEJKA), 0600);
     if (msg_id == -1) {
         ZapiszLog(LOG_BLAD, "Pracownik obslugi: Blad dolaczenia do kolejki komunikatow!");
         OdlaczPamiecWspoldzielona(stan_sklepu);
@@ -69,22 +71,22 @@ int main() {
     size_t size = sizeof(Komunikat) - sizeof(long);
     
     while (1) {
-        // Sprawdz czy koniec
+        //Sprawdz czy koniec symulacji
         if (CZY_KONCZYC(stan_sklepu)) {
              ZapiszLog(LOG_INFO, "Pracownik obslugi: Koniec pracy.");
              break;
         }
         
         Komunikat msg_in;
-        // Odbior zlecen (Typ 4)
+        //Odbior zlecen od kas samoobslugowych
         if (msgrcv(msg_id, &msg_in, size, MSG_TYPE_PRACOWNIK, 0) != -1) {
             
             int id_kasy_nadawcy = msg_in.liczba_produktow;
             int operacja = msg_in.operacja;
-            int wynik = 1; // Default OK
+            int wynik = 1; //Domyslnie powodzenie
             
-            // Symulacja czasu reakcji
-            SYMULACJA_USLEEP(stan_sklepu, 500000); // 0.5s
+            //Symulacja czasu reakcji
+            SYMULACJA_USLEEP(stan_sklepu, 500000); //0.5s
             
             if (operacja == OP_WERYFIKACJA_WIEKU) {
                 if (msg_in.wiek < 18) {
@@ -99,25 +101,30 @@ int main() {
                 wynik = 1;
             }
             
-            // Odeslij wynik (Kanal MSG_RES_PRACOWNIK_BASE + ID kasy)
+            //Odeslij wynik czy mozna bylo odblokowac kase samoobslugowa
             Komunikat res;
             res.mtype = MSG_RES_PRACOWNIK_BASE + id_kasy_nadawcy;
             res.operacja = wynik;
             res.liczba_produktow = id_kasy_nadawcy;
-            // Reszta zer
-            res.id_klienta = 0; res.suma_koszyka = 0; res.ma_alkohol = 0; res.wiek = 0;
+
+            //Reszta niepotrzebnych pol
+            res.id_klienta = 0;
+            res.suma_koszyka = 0;
+            res.ma_alkohol = 0;
+            res.wiek = 0;
             
             msgsnd(msg_id, &res, size, 0);
             
         } else {
             if (errno == EINTR) continue;
-            // Inny blad msgq
+
+            //Inny blad
             perror("Pracownik msgrcv");
             break; 
         }
     }
-    OdlaczPamiecWspoldzielona(stan_sklepu);
     
+    OdlaczPamiecWspoldzielona(stan_sklepu);
     return 0;
 }
 #endif

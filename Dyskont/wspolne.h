@@ -8,21 +8,28 @@
 #include "semafory.h"
 #include "logi.h"
 
-//Klucz dla wspólnej kolejki komunikatów (jedna kolejka dla wszystkich)
-#define KLUCZ_KOLEJKI 12345
+//Identyfikatory projektow dla ftok()
+#define ID_IPC_LOGI 'A'
+#define ID_IPC_SEMAFORY 'M'
+#define ID_IPC_PAMIEC 'S'
+#define ID_IPC_KOLEJKA 'Q'
 
-//Globalna flaga sygnalu wyjscia (SIGQUIT w potomkach) - dostepna dla wszystkich procesow
+//Globalna flaga sygnalu wyjscia dla procesow potomnych
 extern volatile sig_atomic_t g_sygnal_wyjscia;
 
 //Makro sprawdzajace czy proces powinien sie zakonczyc
 #define CZY_KONCZYC(stan) ((stan)->flaga_ewakuacji || g_sygnal_wyjscia)
 
-//Wspólny handler SIGQUIT dla procesów pochodnych (ustawia g_sygnal_wyjscia)
+//Wspólny handler SIGQUIT dla procesów pochodnych
 void ObslugaSygnaluWyjscia(int sig);
 
-//Inicjalizacja procesu pochodnego (pamiec, semafory, logowanie)
+//Inicjalizacja procesu pochodnego
 int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_procesu);
 
+//Generuje klucz IPC dla podanego identyfikatora projektu
+key_t GenerujKluczIPC(char id_projektu);
+
+//Typy komunikatow
 #define MSG_TYPE_KASA_1 1
 #define MSG_TYPE_KASA_2 2
 #define MSG_TYPE_SAMOOBSLUGA 3
@@ -37,6 +44,7 @@ int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_
 #define OP_WERYFIKACJA_WIEKU 1
 #define OP_ODBLOKOWANIE_KASY 2
 
+//Struktura komunikatu
 typedef struct {
     long mtype;       //Typ komunikatu
     int id_klienta;   //ID klienta
@@ -47,11 +55,5 @@ typedef struct {
     int operacja;     //Typ zlecenia dla pracownika
     time_t timestamp; //Znacznik czasu wyslania (dla wykrywania zombie)
 } Komunikat;
-
-//Blokujace czekanie na semafor z timeoutem
-int CzekajNaSemafor(int sem_id, int sem_num, int sek_timeout);
-
-//Blokujace czekanie na semafor az do przerwania przez sygnal (np. SIGCHLD)
-int CzekajNaSygnal(int sem_id);
 
 #endif

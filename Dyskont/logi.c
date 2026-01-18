@@ -1,5 +1,6 @@
 #include "logi.h"
 #include "pamiec_wspoldzielona.h"
+#include "wspolne.h"
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -14,7 +15,7 @@ static int watek_uruchomiony = 0;
 static void* PetlaLoggera(void* arg) {
     (void)arg;
 
-    //Zablokuj wszystkie sygnaly w watku loggera (zeby Main je obslugiwal)
+    //Zablokuj wszystkie sygnaly w watku loggera by to proces glowny je obslugiwal
     sigset_t set;
     sigfillset(&set);
     pthread_sigmask(SIG_BLOCK, &set, NULL);
@@ -39,7 +40,7 @@ static void* PetlaLoggera(void* arg) {
         pthread_exit(NULL);
     }
     
-    //Ustawienie FD_CLOEXEC - plik logu nie bedzie dziedziczony przez exec()
+    //Ustawienie flagi FD_CLOEXEC zeby plik logu nie byl dziedziczony przez execl()
     fcntl(deskryptor_pliku, F_SETFD, FD_CLOEXEC);
 
     struct KomunikatLog msg;
@@ -104,13 +105,14 @@ static void* PetlaLoggera(void* arg) {
         }
     }
 
+    //Zamykamy plik logow oraz konczymy watek
     close(deskryptor_pliku);
     pthread_exit(NULL);
 }
 
 void InicjalizujSystemLogowania() {
     
-    key_t klucz = ftok(IPC_SCIEZKA, 65); //'A' = 65
+    key_t klucz = GenerujKluczIPC(ID_IPC_LOGI);
     if (klucz == -1) {
         perror("Blad generowania klucza");
         exit(1);
@@ -132,9 +134,9 @@ void UruchomWatekLogujacy() {
     watek_uruchomiony = 1;
 }
 
+//Wyslanie komunikatu konca i czekanie az watek przetworzy wszystkie logi
 void ZamknijSystemLogowania() {
-    //Wysylamy komunikat konca i czekamy az watek przetworzy wszystkie logi
-    
+
     if (watek_uruchomiony && id_kolejki != -1) {
         if (!pthread_equal(pthread_self(), watek_loggera)) {
             //Wyslij komunikat konca
@@ -164,8 +166,8 @@ void ZapiszLog(TypLogu typ_logu, const char* format) {
     strncpy(msg.tresc, format, 127);
     msg.tresc[127] = '\0';
 
-    //Wyslanie do kolejki BLOKUJACE
-    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0);
+    //Wyslanie do kolejki (nieblokujace by logi nie zatrzymywaly symulacji)
+    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), IPC_NOWAIT);
 }
 
 void ZapiszLogF(TypLogu typ_logu, const char* format, ...) {
@@ -180,6 +182,6 @@ void ZapiszLogF(TypLogu typ_logu, const char* format, ...) {
     vsnprintf(msg.tresc, sizeof(msg.tresc), format, args);
     va_end(args);
 
-    //Wyslanie do kolejki BLOKUJACE
-    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0);
+    //Wyslanie do kolejki (nieblokujace by logi nie zatrzymywaly symulacji)
+    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), IPC_NOWAIT);
 }

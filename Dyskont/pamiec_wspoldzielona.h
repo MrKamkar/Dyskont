@@ -30,7 +30,7 @@ typedef struct {
     char nazwa[50];
     double cena;
     KategoriaProduktu kategoria;
-    double waga; //w gramach (dla pojedynczej sztuki)
+    double waga; //W gramach
 } Produkt;
 
 //Maksymalne rozmiary kolejek
@@ -42,17 +42,17 @@ typedef struct {
 #define LICZBA_KAS_SAMOOBSLUGOWYCH 6
 #define LICZBA_KAS_STACJONARNYCH 2
 
-//Sciezka do pliku dla ftok() - wspolna dla wszystkich procesow
+//Sciezka do pliku dla ftok() wspolna dla wszystkich procesow
 #define IPC_SCIEZKA "./dyskont.out"
 
 //Parametry symulacji
 #define MIN_KAS_SAMO_CZYNNYCH 3
-#define KLIENCI_NA_KASE 5  //Parametr K z opisu
-#define MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE 1000  //Domyslna wartosc
-#define PRZERWA_MIEDZY_KLIENTAMI_MS 500 //Przerwa miedzy klientami
-#define CZAS_OCZEKIWANIA_T 5  //Czas oczekiwania w sekundach, po ktorym klient moze przejsc do kasy stacjonarnej
+#define KLIENCI_NA_KASE 5  //Parametr K z README.md
+#define MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE 1000
+#define PRZERWA_MIEDZY_KLIENTAMI_MS 500
+#define CZAS_OCZEKIWANIA_T 5  //Czas oczekiwania, po ktorym klient moze przejsc do kasy stacjonarnej
 
-//Makro do symulacyjnych usleep - pomija sleep gdy tryb_testu == 1
+//Makro do symulacyjnych usleep, ktore mozna wylaczyc w trybie testu
 #define SYMULACJA_USLEEP(stan, us) if ((stan)->tryb_testu == 0) usleep(us);
 
 //Stany kas
@@ -62,56 +62,57 @@ typedef enum {
     KASA_ZAJETA,
     KASA_ZAMYKANA
 } StanKasy;
+ 
+//Polecenia kierownika
+typedef enum {
+    POLECENIE_BRAK = 0,
+    POLECENIE_OTWORZ_KASE_2 = 1,
+    POLECENIE_ZAMKNIJ_KASE = 2
+} PolecenieKierownika;
 
 //Struktura pojedynczej kasy samoobslugowej
 typedef struct {
     StanKasy stan;
-    int id_klienta;           //ID obslugiwanego klienta (-1 jesli wolna)
-    time_t czas_rozpoczecia;  //Czas rozpoczecia obslugi
+    int id_klienta; //ID obslugiwanego klienta, jak -1 to kasa jest wolna
 } KasaSamoobslugowa;
 
 //Struktura kasy stacjonarnej
 typedef struct {
     StanKasy stan;
-    int id_klienta;                  //ID obslugiwanego klienta
-    unsigned int liczba_w_kolejce;   //Liczba osob czekajacych
-    time_t czas_ostatniej_obslugi;   //Dla mechanizmu auto-zamykania
+    int id_klienta; //ID obslugiwanego klienta
+    unsigned int liczba_w_kolejce; //Liczba klientow w kolejce do kasy stacjonarnej
 } KasaStacjonarna;
 
-//Produkt z stanem magazynowym
-typedef struct {
-    Produkt produkt;      //Dane produktu (nazwa, cena, kategoria, waga)
-    unsigned int ilosc;   //Liczba sztuk w magazynie
-} ProduktMagazyn;
 
 //Glowna struktura stanu sklepu w pamieci wspoldzielonej
 typedef struct {
+
     //Kasy
     KasaSamoobslugowa kasy_samo[LICZBA_KAS_SAMOOBSLUGOWYCH];
     KasaStacjonarna kasy_stacjonarne[LICZBA_KAS_STACJONARNYCH];
 
-    unsigned int liczba_w_kolejce_samoobslugowej; //Licba klientow w kolejce do kasy samoobslugowej
+    unsigned int liczba_w_kolejce_samoobslugowej; //Liczba klientow w kolejce do kasy samoobslugowej
     
     //Liczniki
     unsigned int liczba_klientow_w_sklepie;
-    unsigned int liczba_czynnych_kas_samo;
+    unsigned int liczba_czynnych_kas_samoobslugowych;
     
     //Baza produktow sklepu
-    ProduktMagazyn magazyn[MAX_PRODUKTOW];
-    unsigned int liczba_produktow;
+    Produkt magazyn[MAX_PRODUKTOW];
+    unsigned int liczba_produktow; //Rozmiar tablicy magazyn
     
     //Flagi kontrolne
-    int flaga_ewakuacji; //Sygnal 3 od kierownika
-    int polecenie_kierownika;    //Polecenie od kierownika (0=brak, 1=otworz, 2=zamknij, 3=ewakuacja)
-    int id_kasy_do_zamkniecia;   //Ktora kasa ma byc zamknieta (0 lub 1)
+    int flaga_ewakuacji; //Sygnal od kierownika lub SIGINT
+    PolecenieKierownika polecenie_kierownika; //Polecenie od kierownika
+    int id_kasy_do_zamkniecia; //Ktora kasa ma byc zamknieta (0 lub 1)
     
-    //PID glownego procesu (do wysylania sygnalow)
+    //PID glownego procesu do wysylania sygnalow
     pid_t pid_glowny;
     
     //Czas symulacji
     time_t czas_startu;
     
-    //Tryb testu (0=normalny, 1=bez sleepow symulacyjnych)
+    //Tryb testu (0 to normalny, 1 to bez usleepow)
     int tryb_testu;
     
     //Maksymalna liczba klientow rownoczesnie w sklepie
