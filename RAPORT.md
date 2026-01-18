@@ -245,7 +245,6 @@ Poniżej znajdują się odniesienia do kluczowych mechanizmów systemowych wykor
 - `write` (zapis do logu): [logi.c:103](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L103)
 - `close` (zamknięcie pliku): [logi.c:109](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L109)
 - `read` (odczyt z potoku sterującego): [main.c:38](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L38)
-- `unlink` (nie użyto - pliki tymczasowe nie były wymagane, logi są trwałe).
 
 **b. Tworzenie procesów (`fork`, `exec`, `exit`, `wait`)**
 
@@ -259,7 +258,6 @@ Poniżej znajdują się odniesienia do kluczowych mechanizmów systemowych wykor
 - `pthread_create` (utworzenie wątku loggera): [logi.c:130](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L130)
 - `pthread_exit` (zakończenie wątku): [logi.c:110](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L110)
 - `pthread_sigmask` (blokowanie sygnałów w wątku): [logi.c:21](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L21)
-- _Mutexy wątków nie były wymagane, gdyż wątek loggera używa kolejki komunikatów jako bufora synchronizującego._
 
 **d. Obsługa sygnałów (`kill`, `signal`, `sigaction`)**
 
