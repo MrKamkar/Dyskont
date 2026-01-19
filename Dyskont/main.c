@@ -5,6 +5,7 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include "logi.h"
 #include "klient.h"
 #include "pamiec_wspoldzielona.h"
@@ -25,8 +26,115 @@ static volatile sig_atomic_t g_calkowita_liczba_klientow = 0; //Liczba wszystkic
 static int g_is_parent = 1; //Flaga mowiaca czy jestesmy w glownym procesie
 static volatile sig_atomic_t g_zadanie_zamkniecia = 0; //Prosba o zamkniecie (Ctrl+C)
 
+//Deklaracja funkcji pomocniczej
+int CzekajNaZdarzenieIPC(int timeout_sec);
+
 //Globalne zmienne dla mechanizmu pipe
 static int g_pipe_fd[2]; //[0] dla odczytu, [1] dla zapisu
+
+//Globalne PIDy procesow pomocniczych (dla watku sprzatajacego)
+static pid_t g_pid_kasjerow[LICZBA_KAS_STACJONARNYCH];
+static pid_t g_pid_kas_samo[LICZBA_KAS_SAMOOBSLUGOWYCH];
+static pid_t g_pid_pracownik = -1;
+
+//Watek sprzatajacy zasoby
+void* WatekSprzatajacy(void* arg) {
+    (void)arg;
+    char buf[256];
+    int status;
+    
+    ZapiszLog(LOG_INFO, "Watek sprzatajacy: Rozpoczynanie procedury czyszczenia...");
+    
+    //Zamykanie procesow pomocniczych
+    //Wyslij SIGTERM do wszystkich procesow pomocniczych aby je wybudzic z semaforow
+    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
+        if (g_pid_kasjerow[i] > 0) kill(g_pid_kasjerow[i], SIGTERM);
+    }
+
+    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
+        if (g_pid_kas_samo[i] > 0) kill(g_pid_kas_samo[i], SIGTERM);
+    }
+
+    if (g_pid_pracownik > 0) kill(g_pid_pracownik, SIGTERM);
+    
+    //Oczekiwanie na zakonczenie procesow pomocniczych
+    time_t start_cleanup = time(NULL);
+    int cleanup_timeout = 15;
+    int procesy_pozostale = LICZBA_KAS_STACJONARNYCH + LICZBA_KAS_SAMOOBSLUGOWYCH + 1;
+    
+    while (procesy_pozostale > 0 && (time(NULL) - start_cleanup) < cleanup_timeout) {
+
+        //Sprawdz kasjerow
+        for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
+            if (g_pid_kasjerow[i] > 0) {
+                pid_t wynik = waitpid(g_pid_kasjerow[i], &status, WNOHANG);
+                if (wynik > 0 || (wynik == -1 && errno == ECHILD)) {
+                    sprintf(buf, "Proces kasjera [Kasa: %d] zakonczony.", i + 1);
+                    ZapiszLog(LOG_INFO, buf);
+                    g_pid_kasjerow[i] = -1;
+                    procesy_pozostale--;
+                }
+            }
+        }
+        
+        //Sprawdz kasy samoobslugowe
+        for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
+            if (g_pid_kas_samo[i] > 0) {
+                pid_t wynik = waitpid(g_pid_kas_samo[i], &status, WNOHANG);
+                if (wynik > 0 || (wynik == -1 && errno == ECHILD)) {
+                    sprintf(buf, "Proces kasy samoobslugowej [Kasa: %d] zakonczony.", i + 1);
+                    ZapiszLog(LOG_INFO, buf);
+                    g_pid_kas_samo[i] = -1;
+                    procesy_pozostale--;
+                }
+            }
+        }
+        
+        //Sprawdz pracownika
+        if (g_pid_pracownik > 0) {
+            pid_t wynik = waitpid(g_pid_pracownik, &status, WNOHANG);
+            if (wynik > 0 || (wynik == -1 && errno == ECHILD)) {
+                ZapiszLog(LOG_INFO, "Proces pracownika obslugi zakonczony.");
+                g_pid_pracownik = -1;
+                procesy_pozostale--;
+            }
+        }
+        
+        if (procesy_pozostale > 0) {
+            CzekajNaZdarzenieIPC(1);
+        }
+    }
+    
+    if (procesy_pozostale > 0) {
+        
+        //Ostateczne zabicie procesow jesli nie zakonczyly sie same
+        for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) if (g_pid_kasjerow[i] > 0) kill(g_pid_kasjerow[i], SIGKILL);
+        for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) if (g_pid_kas_samo[i] > 0) kill(g_pid_kas_samo[i], SIGKILL);
+        if (g_pid_pracownik > 0) kill(g_pid_pracownik, SIGKILL);
+        
+        //Jeszcze chwila na posprzatanie przez OS
+        sleep(1);
+    }
+    
+    ZapiszLog(LOG_INFO, "Watek sprzatajacy: Zwalnianie zasobow IPC..");
+    
+    OdlaczPamiecWspoldzielona(g_stan_sklepu);
+    UsunPamiecWspoldzielona();
+    UsunSemafory(g_sem_id);
+    
+    if (g_msg_id != -1) msgctl(g_msg_id, IPC_RMID, NULL);
+    
+    ZapiszLog(LOG_INFO, "Watek sprzatajacy: Usunieto kolejke komunikatow.");
+    
+    //Zamknij potok IPC
+    close(g_pipe_fd[0]);
+    close(g_pipe_fd[1]);
+    
+    //Zamkniecie loggera na samym koncu by wyswietlic wszystkie logi
+    ZamknijSystemLogowania();
+    
+    return NULL;
+}
 
 
 //Aktualizuj licznik klientow
@@ -275,7 +383,7 @@ int main(int argc, char* argv[]) {
     
     //Uruchomienie procesow kasjerow
     ZapiszLog(LOG_INFO, "Uruchamianie procesow kasjerow..");
-    pid_t pid_kasjerow[LICZBA_KAS_STACJONARNYCH];
+    //pid_t pid_kasjerow[LICZBA_KAS_STACJONARNYCH]; //Globalne
     
     for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
         pid_t pid = fork();
@@ -298,7 +406,7 @@ int main(int argc, char* argv[]) {
         }
         else {
             //Przekazanie informacji o poprawnym uruchomieniu procesu kasjera
-            pid_kasjerow[i] = pid;
+            g_pid_kasjerow[i] = pid;
             char buf[256];
             sprintf(buf, "Uruchomiono proces kasjera [PID: %d, Kasa: %d]", pid, i + 1);
             ZapiszLog(LOG_INFO, buf);
@@ -307,13 +415,14 @@ int main(int argc, char* argv[]) {
     
     //Uruchomienie procesu pracownika obslugi
     ZapiszLog(LOG_INFO, "Uruchamianie procesu pracownika obslugi..");
-    pid_t pid_pracownik = fork();
+    pid_t pid = fork();
+    if (pid != -1) g_pid_pracownik = pid;
     
-    if (pid_pracownik == -1) {
+    if (pid == -1) {
         perror("Blad fork() dla pracownika obslugi");
         ZapiszLog(LOG_BLAD, "Nie udalo sie stworzyc procesu pracownika obslugi!");
     }
-    else if (pid_pracownik == 0) {
+    else if (pid == 0) {
         g_is_parent = 0; //Dziecko nie moze sprzatac zasobow
         
         execl("./pracownik", "pracownik", (char*)NULL);
@@ -324,13 +433,13 @@ int main(int argc, char* argv[]) {
     else {
         //Przekazanie informacji o poprawnym uruchomieniu procesu pracownika obslugi
         char buf[256];
-        sprintf(buf, "Uruchomiono proces pracownika obslugi [PID: %d]", pid_pracownik);
+        sprintf(buf, "Uruchomiono proces pracownika obslugi [PID: %d]", pid);
         ZapiszLog(LOG_INFO, buf);
     }
     
     //Uruchomienie procesow kas samoobslugowych (6 kas)
     ZapiszLog(LOG_INFO, "Uruchamianie procesow kas samoobslugowych..");
-    pid_t pid_kas_samo[LICZBA_KAS_SAMOOBSLUGOWYCH];
+    //pid_t pid_kas_samo[LICZBA_KAS_SAMOOBSLUGOWYCH]; //Globalne
     
     for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
         pid_t pid = fork();
@@ -353,7 +462,7 @@ int main(int argc, char* argv[]) {
         }
         else {
             //Przekazanie informacji o poprawnym uruchomieniu procesu kasy samoobslugowej
-            pid_kas_samo[i] = pid;
+            g_pid_kas_samo[i] = pid;
             char buf[256];
             sprintf(buf, "Uruchomiono proces kasy samoobslugowej [PID: %d, Kasa: %d]", pid, i + 1);
             ZapiszLog(LOG_INFO, buf);
@@ -464,103 +573,19 @@ int main(int argc, char* argv[]) {
     sprintf(buf, "Symulacja zakonczona. Laczna liczba klientow: %d", (int)g_calkowita_liczba_klientow);
     ZapiszLog(LOG_INFO, buf);
     
-    //Zamykanie procesow pomocniczych
-    ZapiszLog(LOG_INFO, "Zamykanie procesow kasjerow i kas samoobslugowych..");
+    //Zamykanie procesow pomocniczych i zasobow IPC w osobnym watku
+    ZapiszLog(LOG_INFO, "Uruchamianie watku sprzatajacego...");
     
-    //Wyslij SIGTERM do wszystkich procesow pomocniczych aby je wybudzic z semaforow
-    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
-        kill(pid_kasjerow[i], SIGTERM);
-    }
-
-    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-        kill(pid_kas_samo[i], SIGTERM);
-    }
-
-    kill(pid_pracownik, SIGTERM);
-    
-    int status;
-    
-    //Oczekiwanie na zakonczenie procesow pomocniczych
-    time_t start_cleanup = time(NULL);
-    int cleanup_timeout = 15;
-    int procesy_pozostale = LICZBA_KAS_STACJONARNYCH + LICZBA_KAS_SAMOOBSLUGOWYCH + 1;
-    
-    while (procesy_pozostale > 0 && (time(NULL) - start_cleanup) < cleanup_timeout) {
-
-        //Sprawdz kasjerow
-        for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
-            if (pid_kasjerow[i] > 0) {
-                pid_t wynik = waitpid(pid_kasjerow[i], &status, WNOHANG);
-                if (wynik > 0 || (wynik == -1 && errno == ECHILD)) {
-                    sprintf(buf, "Proces kasjera [Kasa: %d] zakonczony.", i + 1);
-                    ZapiszLog(LOG_INFO, buf);
-                    pid_kasjerow[i] = -1;
-                    procesy_pozostale--;
-                }
-            }
-        }
-        
-        //Sprawdz kasy samoobslugowe
-        for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-            if (pid_kas_samo[i] > 0) {
-                pid_t wynik = waitpid(pid_kas_samo[i], &status, WNOHANG);
-                if (wynik > 0 || (wynik == -1 && errno == ECHILD)) {
-                    sprintf(buf, "Proces kasy samoobslugowej [Kasa: %d] zakonczony.", i + 1);
-                    ZapiszLog(LOG_INFO, buf);
-                    pid_kas_samo[i] = -1;
-                    procesy_pozostale--;
-                }
-            }
-        }
-        
-        //Sprawdz pracownika
-        if (pid_pracownik > 0) {
-            pid_t wynik = waitpid(pid_pracownik, &status, WNOHANG);
-            if (wynik > 0 || (wynik == -1 && errno == ECHILD)) {
-                ZapiszLog(LOG_INFO, "Proces pracownika obslugi zakonczony.");
-                pid_pracownik = -1;
-                procesy_pozostale--;
-            }
-        }
-        
-        if (procesy_pozostale > 0) {
-            CzekajNaZdarzenieIPC(1);
-        }
+    pthread_t thread_cleanup;
+    if (pthread_create(&thread_cleanup, NULL, WatekSprzatajacy, NULL) != 0) {
+        perror("Blad tworzenia watku sprzatajacego");
+        //Fallback jesli watek nie powstanie
+        WatekSprzatajacy(NULL);
+    } else {
+        pthread_join(thread_cleanup, NULL);
     }
     
-    if (procesy_pozostale > 0) {
-        
-        //Ostateczne zabicie procesow jesli nie zakonczyly sie same
-        for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) if (pid_kasjerow[i] > 0) kill(pid_kasjerow[i], SIGKILL);
-        for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) if (pid_kas_samo[i] > 0) kill(pid_kas_samo[i], SIGKILL);
-        if (pid_pracownik > 0) kill(pid_pracownik, SIGKILL);
-        
-        //Jeszcze chwila na posprzatanie przez OS
-        sleep(1);
-    }
-    
-    ZapiszLog(LOG_INFO, "Koniec symulacji.");
-    
-    //Czyszczenie zasobow IPC
-    if (g_is_parent) {
-        ZapiszLog(LOG_INFO, "Zwalnianie zasobow IPC..");
-        
-
-        OdlaczPamiecWspoldzielona(g_stan_sklepu);
-        UsunPamiecWspoldzielona();
-        UsunSemafory(g_sem_id);
-        
-        if (g_msg_id != -1) msgctl(g_msg_id, IPC_RMID, NULL);
-        
-        ZapiszLog(LOG_INFO, "Usunieto kolejke komunikatow.");
-        
-        //Zamknij potok IPC
-        close(g_pipe_fd[0]);
-        close(g_pipe_fd[1]);
-        
-        //Zamkniecie loggera na samym koncu by wyswietlic wszystkie logi
-        ZamknijSystemLogowania();
-    }
+    ZapiszLog(LOG_INFO, "Watek sprzatajacy zakonczyl prace. Main konczy dzialanie.");
     
     if (g_is_parent) {
         if (g_zadanie_zamkniecia) {
