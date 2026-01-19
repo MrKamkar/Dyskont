@@ -48,7 +48,7 @@ typedef struct {
 //Parametry symulacji
 #define MIN_KAS_SAMO_CZYNNYCH 3
 #define KLIENCI_NA_KASE 5  //Parametr K z README.md
-#define MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE 1000
+#define MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE 100
 #define PRZERWA_MIEDZY_KLIENTAMI_MS 500
 #define CZAS_OCZEKIWANIA_T 5  //Czas oczekiwania, po ktorym klient moze przejsc do kasy stacjonarnej
 

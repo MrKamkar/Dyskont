@@ -7,6 +7,8 @@
 
 //Wysylanie zadania do pracownika obslugi przez kase samoobslugowa
 int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek) {
+    if (g_sygnal_wyjscia) return -1;
+
     int msg_id = msgget(GenerujKluczIPC(ID_IPC_KOLEJKA), 0600);
     if (msg_id == -1) {
         return -1;

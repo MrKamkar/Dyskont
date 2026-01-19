@@ -105,6 +105,11 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, unsigned int liczba_
     //Skanowanie produktow
     for (unsigned int i = 0; i < liczba_produktow; i++) {
         SYMULACJA_USLEEP(stan, CZAS_SKANOWANIA_PRODUKTU_MS * 1000);
+
+        if (CZY_KONCZYC(stan)) {
+            ZapiszLogF(LOG_OSTRZEZENIE, "Kasa samoobslugowa [%d]: Przerwano obsluge klienta [ID: %d] z powodu ewakuacji.", id_kasy + 1, id_klienta);
+            return -3;
+        }
         
         //Losowa blokada kasy
         if (rand() % SZANSA_BLOKADY == 0) {
