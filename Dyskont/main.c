@@ -43,7 +43,7 @@ void* WatekSprzatajacy(void* arg) {
     char buf[256];
     int status;
     
-    ZapiszLog(LOG_INFO, "Watek sprzatajacy: Rozpoczynanie procedury czyszczenia...");
+    ZapiszLog(LOG_INFO, "Watek sprzatajacy: Rozpoczynanie procedury czyszczenia..");
     
     //Zamykanie procesow pomocniczych
     //Wyslij SIGTERM do wszystkich procesow pomocniczych aby je wybudzic z semaforow
@@ -514,7 +514,7 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    sprintf(buf2, "Stworzono %d procesow klientow. Oczekiwanie na start...", klienci_stworzeni);
+    sprintf(buf2, "Stworzono %d procesow klientow. Oczekiwanie na start..", klienci_stworzeni);
     ZapiszLog(LOG_INFO, buf2);
     
     //Obliczenie czasu zakonczenia symulacji
@@ -541,6 +541,27 @@ int main(int argc, char* argv[]) {
              g_aktywnych_klientow++; //Inkrementacje można robić tutaj bezpiecznie, bo dekrementacja jest na pipie
              
              klienci_wpuszczeni_total++;
+
+             //Dodawanie nowego klienta do puli oczekujacych (uzupelnianie)
+             pid_t pid = fork();
+             if (pid == -1) {
+                 perror("Blad fork() przy uzupelnianiu puli");
+             }
+             else if (pid == 0) {
+                 //Proces potomny - nowy klient
+                 g_is_parent = 0; 
+                 
+                 char id_str[16];
+                 sprintf(id_str, "%d", klienci_stworzeni + 1);
+                 
+                 execl("./klient", "klient", id_str, "0", (char*)NULL);
+                 
+                 perror("Blad exec() dla nowego klienta");
+                 exit(1);
+             } else {
+                 //Rodzic
+                 klienci_stworzeni++;
+             }
              
              //Opoznienie miedzy wpuszczaniem klientow
              SYMULACJA_USLEEP(g_stan_sklepu, PRZERWA_MIEDZY_KLIENTAMI_MS);
@@ -566,7 +587,7 @@ int main(int argc, char* argv[]) {
     kill(0, SIGTERM);
     signal(SIGTERM, ObslugaSIGTERM);  //Przywrocenie obslugi sygnalu
     
-    ZapiszLogF(LOG_INFO, "Koniec symulacji - ewakuacja. Czekam na %u klientow...", g_aktywnych_klientow);
+    ZapiszLogF(LOG_INFO, "Koniec symulacji - ewakuacja. Czekam na %u klientow..", g_aktywnych_klientow);
     
     //Czekanie na wyewakuowanie sie klientow
     time_t czas_oczekiwania_start = time(NULL);
@@ -584,7 +605,7 @@ int main(int argc, char* argv[]) {
         kill(0, SIGTERM);
         signal(SIGTERM, ObslugaSIGTERM);
         
-        ZapiszLog(LOG_INFO, "Czekam 5s na zakonczenie klientow po ewakuacji...");
+        ZapiszLog(LOG_INFO, "Czekam 5s na zakonczenie klientow po ewakuacji..");
         time_t start_ewak = time(NULL);
         while (g_aktywnych_klientow > 0 && (time(NULL) - start_ewak) < 5) {
             AktualizujLicznikKlientow();
@@ -600,7 +621,7 @@ int main(int argc, char* argv[]) {
     ZapiszLogF(LOG_INFO, "Symulacja zakonczona. Laczna liczba klientow: %d", (int)g_calkowita_liczba_klientow);
     
     //Zamykanie procesow pomocniczych i zasobow IPC w osobnym watku
-    ZapiszLog(LOG_INFO, "Uruchamianie watku sprzatajacego...");
+    ZapiszLog(LOG_INFO, "Uruchamianie watku sprzatajacego..");
     
     pthread_t thread_cleanup;
     if (pthread_create(&thread_cleanup, NULL, WatekSprzatajacy, NULL) != 0) {

@@ -175,7 +175,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    ZapiszLogF(LOG_INFO, "Klient [ID: %d] CZEKA NA WEJSCIE (w puli klientow).", klient->id);
+    ZapiszLogF(LOG_INFO, "Klient [ID: %d] oczekuje na wejscie.", klient->id);
 
     //Czekanie na wpuszczenie do sklepu
     if (ZajmijSemafor(sem_id, SEM_WEJSCIE_DO_SKLEPU, stan_sklepu) != 0) {
