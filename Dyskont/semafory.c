@@ -49,6 +49,9 @@ int InicjalizujSemafory() {
         wartosci[SEM_KASA_SAMOOBSLUGOWA_0 + i] = 0;
     }
     
+    //Semafor wpuszczajacy klientow
+    wartosci[SEM_WEJSCIE_DO_SKLEPU] = 0;
+    
     arg.array = wartosci;
     
     if (semctl(sem_id, 0, SETALL, arg) == -1) {

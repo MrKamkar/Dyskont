@@ -23,7 +23,9 @@
 #define SEM_KASA_SAMOOBSLUGOWA_4 7
 #define SEM_KASA_SAMOOBSLUGOWA_5 8
 
-#define SEM_LICZBA 9 //Calkowita liczba semaforow
+#define SEM_WEJSCIE_DO_SKLEPU 9 //Sygnal wpuszczenia klienta do sklepu
+
+#define SEM_LICZBA 10 //Calkowita liczba semaforow
 
 //Makra mapujace ID kasy na odpowiedni semafor
 #define SEM_OTWORZ_KASA_STACJONARNA(id) ((id) == 0 ? SEM_OTWORZ_KASA_STACJONARNA_1 : SEM_OTWORZ_KASA_STACJONARNA_2)

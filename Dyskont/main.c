@@ -283,11 +283,12 @@ int main(int argc, char* argv[]) {
     fcntl(g_pipe_fd[1], F_SETFD, FD_CLOEXEC);
     
     //Pobranie czasu symulacji i opcjonalnych argumentow
-    if (argc < 2) {
-        fprintf(stderr, "Uzycie: %s <czas_symulacji_sekund> <nr_testu*> <max_klientow*>\n", argv[0]);
-        fprintf(stderr, "  <czas_symulacji_sekund> - czas trwania symulacji\n");
-        fprintf(stderr, "  <nr_testu*>             - tryb testu (0=normalny, 1=bez sleepow), domyslnie 0\n");
-        fprintf(stderr, "  <max_klientow*>         - max klientow rownoczesnie, domyslnie 1000\n");
+    if (argc < 3) {
+        fprintf(stderr, "Uzycie: %s <czas_symulacji> <pula_klientow> <nr_testu*> <max_klientow_sklep*>\n", argv[0]);
+        fprintf(stderr, "  <czas_symulacji>    - czas trwania symulacji (s)\n");
+        fprintf(stderr, "  <pula_klientow>     - calkowita liczba klientow do stworzenia\n");
+        fprintf(stderr, "  <nr_testu*>         - tryb testu (0=normalny, 1=bez sleepow), domyslnie 0\n");
+        fprintf(stderr, "  <max_klientow*>     - max klientow w sklepie rownoczesnie, domyslnie 20\n");
         return 1;
     }
     
@@ -296,11 +297,18 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Blad: Czas symulacji musi byc liczba wieksza od 0\n");
         return 1;
     }
+
+    //Opcjonalna pula klientow
+    int pula_klientow = atoi(argv[2]);
+    if (pula_klientow <= 0) {
+        fprintf(stderr, "Blad: Pula klientow musi byc wieksza od 0\n");
+        return 1;
+    }
     
     //Opcjonalny tryb testu (domyslnie 0)
     int tryb_testu = 0;
-    if (argc >= 3) {
-        tryb_testu = atoi(argv[2]);
+    if (argc >= 4) {
+        tryb_testu = atoi(argv[3]);
         if (tryb_testu < 0 || tryb_testu > 1) {
             fprintf(stderr, "Blad: Nieprawidlowy tryb testu (dozwolone: 0, 1)\n");
             return 1;
@@ -308,9 +316,9 @@ int main(int argc, char* argv[]) {
     }
     
     //Opcjonalny limit klientow rownoczesnie
-    unsigned int max_klientow = MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE;
-    if (argc >= 4) {
-        max_klientow = atoi(argv[3]);
+    unsigned int max_klientow = 20; //Domyslnie mniejsza wartosc by testowac kolejkowanie
+    if (argc >= 5) {
+        max_klientow = atoi(argv[4]);
         if (max_klientow <= 0) {
             fprintf(stderr, "Blad: Maksymalna liczba klientow musi byc wieksza od 0\n");
             return 1;
@@ -469,58 +477,73 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    char buf[256];
-    sprintf(buf, "Symulacja bedzie trwac %d sekund. Max klientow rownoczesnie: %u", 
-            czas_symulacji, g_stan_sklepu->max_klientow_rownoczesnie);
-    ZapiszLog(LOG_INFO, buf);
+    char buf2[256];
+    sprintf(buf2, "Symulacja bedzie trwac %d sekund. Pula klientow: %d. Maksymalne klientow w sklepie: %u", 
+            czas_symulacji, pula_klientow, g_stan_sklepu->max_klientow_rownoczesnie);
+    ZapiszLog(LOG_INFO, buf2);
+
+    //Tworzenie klientow
+    ZapiszLog(LOG_INFO, "Tworzenie uspanych klientow czekajacych na wejscie do sklepu..");
     
-    //Zmienna dla tworzenia procesow klientow
-    int id_klienta = 0;
+    int klienci_stworzeni = 0;
+    for (int i = 0; i < pula_klientow; i++) {
+        pid_t pid = fork();
+        
+        if (pid == -1) {
+            perror("Blad fork() dla klienta");
+            break;
+        }
+        else if (pid == 0) {
+            g_is_parent = 0; //Dziecko nie sprzata zasobow
+
+            char id_str[16];
+            sprintf(id_str, "%d", i + 1);
+            
+            execl("./klient", "klient", id_str, "0", (char*)NULL);
+            
+            perror("Blad exec()");
+            exit(1);
+        }
+        else {
+            klienci_stworzeni++;
+        }
+    }
+    
+    sprintf(buf2, "Stworzono %d procesow klientow. Oczekiwanie na start...", klienci_stworzeni);
+    ZapiszLog(LOG_INFO, buf2);
     
     //Obliczenie czasu zakonczenia symulacji
     time_t czas_startu = time(NULL);
     time_t czas_konca = czas_startu + czas_symulacji;
     
-    ZapiszLog(LOG_INFO, "Rozpoczynam ciagla symulacje klientow...");
+    ZapiszLog(LOG_INFO, "Rozpoczynam zarzadzanie wstepem klientow do sklepu..");
+
+    int klienci_wpuszczeni_total = 0;
 
     //START SYMULACJI
     while (time(NULL) < czas_konca && !g_stan_sklepu->flaga_ewakuacji && !g_zadanie_zamkniecia) {
         
-        //Sprawdzamy pipe i aktualizujemy liczbe klientow i otwartych kas samoobslugowych
+        //Sprawdzamy pipe i aktualizujemy liczbe aktywnych klientow w sklepie
         AktualizujLicznikKlientow();
         ZaktualizujKasySamoobslugowe(g_stan_sklepu, g_sem_id, g_aktywnych_klientow);
 
-        //Jezeli nie przekraczamy limitu klientow rownoczesnie, to tworzymy nowego klienta
-        if (g_aktywnych_klientow < g_stan_sklepu->max_klientow_rownoczesnie) {
-            pid_t pid = fork();
-            
-            if (pid == -1) {
-                perror("Blad fork()");
-                break;
-            }
-            else if (pid == 0) {
-                g_is_parent = 0; //Dziecko nie sprzata zasobow
-
-                char id_str[16];
-                sprintf(id_str, "%d", id_klienta + 1);
-                
-                execl("./klient", "klient", id_str, "0", (char*)NULL);
-                
-                perror("Blad exec()");
-                exit(1);
-            }
-            else {
-                g_aktywnych_klientow++; //Reczne zwiekszenie liczby klientow przez rodzica
-                id_klienta++;
-
-                //Krotka przerwa miedzy tworzeniem procesow
-                SYMULACJA_USLEEP(g_stan_sklepu, PRZERWA_MIEDZY_KLIENTAMI_MS * 1000);
-            }
+        //Wpuszczamy jesli jest miejsce w sklepie oraz sa jeszcze klienci niewpuszczeni
+        if (g_aktywnych_klientow < g_stan_sklepu->max_klientow_rownoczesnie && klienci_wpuszczeni_total < klienci_stworzeni) {
+             
+             //Wpusc jednego klienta
+             ZwolnijSemafor(g_sem_id, SEM_WEJSCIE_DO_SKLEPU);
+             
+             g_aktywnych_klientow++; //Inkrementacje można robić tutaj bezpiecznie, bo dekrementacja jest na pipie
+             
+             klienci_wpuszczeni_total++;
+             
+             //Opoznienie miedzy wpuszczaniem klientow
+             SYMULACJA_USLEEP(g_stan_sklepu, PRZERWA_MIEDZY_KLIENTAMI_MS);
         } 
         else {
-                //Czekamy na zakonczenie ktoregos z procesow klientow
-                CzekajNaZdarzenieIPC(-1);
-            }
+             //Czekamy na zwolnienie miejsca
+             CzekajNaZdarzenieIPC(1);
+        }
     }
     
     //Sprawdz czy to bylo Ctrl+C czy skonczyl sie czas symulacji
@@ -538,8 +561,7 @@ int main(int argc, char* argv[]) {
     kill(0, SIGTERM);
     signal(SIGTERM, ObslugaSIGTERM);  //Przywrocenie obslugi sygnalu
     
-    sprintf(buf, "Koniec symulacji - ewakuacja. Czekam na %u klientow...", g_aktywnych_klientow);
-    ZapiszLog(LOG_INFO, buf);
+    ZapiszLogF(LOG_INFO, "Koniec symulacji - ewakuacja. Czekam na %u klientow...", g_aktywnych_klientow);
     
     //Czekanie na wyewakuowanie sie klientow
     time_t czas_oczekiwania_start = time(NULL);
@@ -570,8 +592,7 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    sprintf(buf, "Symulacja zakonczona. Laczna liczba klientow: %d", (int)g_calkowita_liczba_klientow);
-    ZapiszLog(LOG_INFO, buf);
+    ZapiszLogF(LOG_INFO, "Symulacja zakonczona. Laczna liczba klientow: %d", (int)g_calkowita_liczba_klientow);
     
     //Zamykanie procesow pomocniczych i zasobow IPC w osobnym watku
     ZapiszLog(LOG_INFO, "Uruchamianie watku sprzatajacego...");

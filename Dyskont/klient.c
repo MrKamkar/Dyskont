@@ -175,6 +175,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    ZapiszLogF(LOG_INFO, "Klient [ID: %d] CZEKA NA WEJSCIE (w puli klientow).", klient->id);
+
+    //Czekanie na wpuszczenie do sklepu
+    if (ZajmijSemafor(sem_id, SEM_WEJSCIE_DO_SKLEPU, stan_sklepu) != 0) {
+        //Jesli blad (bo np. ewakuacja), klient wychodzi calkiem
+        ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] rezygnuje z wejscia (Ewakuacja/Blad).", klient->id);
+        UsunKlienta(klient);
+        OdlaczPamiecWspoldzielona(stan_sklepu);
+        return 0;
+    }
+
     ZapiszLogF(LOG_INFO, "Klient [ID: %d] wszedl do sklepu. Wiek: %u lat. Planuje kupic %u produktow.", 
             klient->id, klient->wiek, klient->ilosc_planowana);
 
