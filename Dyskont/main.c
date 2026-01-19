@@ -304,6 +304,11 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Blad: Pula klientow musi byc wieksza od 0\n");
         return 1;
     }
+    if (pula_klientow > 10000) {
+        fprintf(stderr, "Blad: Pula klientow nie moze byc wieksza od 10000\n");
+        return 1;
+    }
+
     
     //Opcjonalny tryb testu (domyslnie 0)
     int tryb_testu = 0;
@@ -323,8 +328,8 @@ int main(int argc, char* argv[]) {
             fprintf(stderr, "Blad: Maksymalna liczba klientow musi byc wieksza od 0\n");
             return 1;
         }
-        if (max_klientow > 10000) {
-            fprintf(stderr, "Blad: Maksymalna liczba klientow to 10000 (by nie przeciazyc systemu)\n");
+        if (max_klientow > 1000) {
+            fprintf(stderr, "Blad: Maksymalna liczba klientow to 1000 (by nie przeciazyc systemu)\n");
             return 1;
         }
     }
