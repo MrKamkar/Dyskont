@@ -1,8 +1,11 @@
 #include "kierownik.h"
 #include "wspolne.h"
+#include "kolejki.h"
 #include <string.h>
 #include <unistd.h>
 
+#if 0
+/*
 //Wyswietla menu kierownika
 void WyswietlMenu() {
     printf("PANEL KIEROWNIKA SKLEPU:\n");
@@ -19,7 +22,7 @@ void WyswietlMenu() {
 void OtworzKase2(StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     if (stan->kasy_stacjonarne[1].stan == KASA_ZAMKNIETA) {
         stan->kasy_stacjonarne[1].stan = KASA_WOLNA;
@@ -42,9 +45,10 @@ void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
     
     char buf[256];
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     StanKasy aktualny_stan = stan->kasy_stacjonarne[id_kasy].stan;
-    int w_kolejce = stan->kasy_stacjonarne[id_kasy].liczba_w_kolejce;
+    // int w_kolejce = stan->kasy_stacjonarne[id_kasy].liczba_w_kolejce;
+    int w_kolejce = 0; // Liczba osob w kolejce nieznana (IPC)
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     if (aktualny_stan == KASA_ZAMKNIETA) {
@@ -59,14 +63,14 @@ void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
         printf("Kasa %d zostanie zamknieta po obsluzeniu %d klientow.\n", id_kasy + 1, w_kolejce);
         
         //Ustawiamy polecenie, kasjer sam zamknie kase po obsluzeniu klientow w kolejce
-        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
+        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         stan->polecenie_kierownika = POLECENIE_ZAMKNIJ_KASE;
         stan->id_kasy_do_zamkniecia = id_kasy;
         ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     } else {
 
         //Mozna zamknac od razu
-        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
+        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         stan->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
         ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
@@ -80,7 +84,7 @@ void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
 void WydajPolecenie(PolecenieKierownika polecenie, int id_kasy, StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     stan->polecenie_kierownika = polecenie;
     stan->id_kasy_do_zamkniecia = id_kasy;
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
@@ -90,7 +94,7 @@ void WydajPolecenie(PolecenieKierownika polecenie, int id_kasy, StanSklepu* stan
 void PokazStatusKas(StanSklepu* stan, int sem_id) {
     if (!stan) return;
     
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     printf("\n--- STATUS KAS ---\n");
     printf("Klientow w sklepie: %u\n\n", stan->liczba_klientow_w_sklepie);
@@ -111,8 +115,9 @@ void PokazStatusKas(StanSklepu* stan, int sem_id) {
                 break;
             default: status = "NIEZNANY";
         }
-        printf("  Kasa %d: %s (w kolejce: %u/%u)\n", 
-               i + 1, status, stan->kasy_stacjonarne[i].liczba_w_kolejce, MAX_KOLEJKA_STACJONARNA);
+        printf("  Kasa %d: %s (Max: %u)\n", 
+               i + 1, status, MAX_KOLEJKA_STACJONARNA);
+               // stan->kasy_stacjonarne[i].liczba_w_kolejce, MAX_KOLEJKA_STACJONARNA);
     }
     
     printf("\nKASY SAMOOBSLUGOWE:\n");
@@ -121,9 +126,21 @@ void PokazStatusKas(StanSklepu* stan, int sem_id) {
         if (stan->kasy_samo[i].stan == KASA_ZAJETA) zajete++;
     }
     printf("  Zajętych: %d/%d\n", zajete, stan->liczba_czynnych_kas_samoobslugowych);
-    printf("  W kolejce: %u/%u\n", stan->liczba_w_kolejce_samoobslugowej, MAX_KOLEJKA_SAMOOBSLUGOWA);
+    //printf("  W kolejce: %u/%u\n", stan->liczba_w_kolejce_samoobslugowej, MAX_KOLEJKA_SAMOOBSLUGOWA);
     
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    
+    //Pobranie ID kolejek by sprawdzic stan
+    int msg_id_1 = PobierzIdKolejki(ID_IPC_KASA_1);
+    int msg_id_2 = PobierzIdKolejki(ID_IPC_KASA_2);
+    int msg_id_samo = PobierzIdKolejki(ID_IPC_SAMO);
+
+    printf("\n--- STATUS KOLEJEK (IPC msgctl) ---\n");
+    printf("  Kasa 1: %d osob\n", PobierzRozmiarKolejki(msg_id_1));
+    printf("  Kasa 2: %d osob\n", PobierzRozmiarKolejki(msg_id_2));
+    printf("  Samoobslugowa: %d osob\n", PobierzRozmiarKolejki(msg_id_samo)); 
+
     printf("------------------\n");
 }
 
@@ -226,6 +243,13 @@ int main() {
     }
     
     OdlaczPamiecWspoldzielona(stan_sklepu);
+    return 0;
+}
+*/
+#endif
+
+#ifdef KIEROWNIK_STANDALONE
+int main() {
     return 0;
 }
 #endif

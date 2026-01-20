@@ -1,15 +1,7 @@
 #include "wspolne.h"
 #include <stdio.h>
 #include <string.h>
-
-//Ustawienie globalnej flagi sygnalu wyjscia
-volatile sig_atomic_t g_sygnal_wyjscia = 0;
-
-//Wspólny handler SIGTERM
-void ObslugaSygnaluWyjscia(int sig) {
-    (void)sig;
-    g_sygnal_wyjscia = 1;
-}
+#include <sys/msg.h>
 
 //Implementacja funkcji generujacej klucz
 key_t GenerujKluczIPC(char id_projektu) {
@@ -21,6 +13,7 @@ key_t GenerujKluczIPC(char id_projektu) {
     }
     return klucz;
 }
+
 
 //Inicjalizacja procesu pochodnego
 int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_procesu) {

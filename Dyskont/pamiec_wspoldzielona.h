@@ -70,28 +70,25 @@ typedef enum {
     POLECENIE_ZAMKNIJ_KASE = 2
 } PolecenieKierownika;
 
-//Struktura pojedynczej kasy samoobslugowej
-typedef struct {
-    StanKasy stan;
-    int id_klienta; //ID obslugiwanego klienta, jak -1 to kasa jest wolna
-} KasaSamoobslugowa;
-
-//Struktura kasy stacjonarnej
+//Struktura kasy
 typedef struct {
     StanKasy stan;
     int id_klienta; //ID obslugiwanego klienta
-    unsigned int liczba_w_kolejce; //Liczba klientow w kolejce do kasy stacjonarnej
-} KasaStacjonarna;
+    pid_t pid;      //PID procesu kasy
+} Kasa;
+
 
 
 //Glowna struktura stanu sklepu w pamieci wspoldzielonej
 typedef struct {
 
     //Kasy
-    KasaSamoobslugowa kasy_samo[LICZBA_KAS_SAMOOBSLUGOWYCH];
-    KasaStacjonarna kasy_stacjonarne[LICZBA_KAS_STACJONARNYCH];
+    Kasa kasy_samo[LICZBA_KAS_SAMOOBSLUGOWYCH];
+    Kasa kasy_stacjonarne[LICZBA_KAS_STACJONARNYCH];
 
-    unsigned int liczba_w_kolejce_samoobslugowej; //Liczba klientow w kolejce do kasy samoobslugowej
+
+    //unsigned int liczba_w_kolejce_samoobslugowej; //Liczba klientow w kolejce do kasy samoobslugowej
+
     
     //Liczniki
     unsigned int liczba_klientow_w_sklepie;
@@ -102,7 +99,6 @@ typedef struct {
     unsigned int liczba_produktow; //Rozmiar tablicy magazyn
     
     //Flagi kontrolne
-    int flaga_ewakuacji; //Sygnal od kierownika lub SIGINT
     PolecenieKierownika polecenie_kierownika; //Polecenie od kierownika
     int id_kasy_do_zamkniecia; //Ktora kasa ma byc zamknieta (0 lub 1)
     

@@ -9,7 +9,7 @@
 
 //Struktura klienta
 typedef struct {
-    int id;
+    pid_t id;
     unsigned int wiek;
     
     //Koszyk (tabela o stałym rozmiarze)

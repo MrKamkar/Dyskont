@@ -4,41 +4,48 @@
 #include <time.h>
 #include <sys/msg.h>
 #include <errno.h>
+#include "kolejki.h"
 
 //Wysylanie zadania do pracownika obslugi przez kase samoobslugowa
 int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek) {
-    if (g_sygnal_wyjscia) return -1;
 
-    int msg_id = msgget(GenerujKluczIPC(ID_IPC_KOLEJKA), 0600);
+    int msg_id = PobierzIdKolejki(ID_IPC_PRACOWNIK);
     if (msg_id == -1) {
         return -1;
     }
     
-    Komunikat msg;
+    MsgPracownik msg;
     msg.mtype = MSG_TYPE_PRACOWNIK; //4
     msg.operacja = typ_operacji;
-    msg.liczba_produktow = id_kasy; //ID Kasy jako nadawca
+    msg.id_kasy = id_kasy; //ID Kasy jako nadawca
     msg.wiek = wiek;
-    msg.id_klienta = 0;
-    msg.suma_koszyka = 0.0;
-    msg.ma_alkohol = 0;
+    msg.timestamp = time(NULL);
     
-    size_t size = sizeof(Komunikat) - sizeof(long);
+    size_t size = sizeof(MsgPracownik) - sizeof(long);
     
     //Wyslij do kolejki komunikatow
-    if (msgsnd(msg_id, &msg, size, 0) == -1) {
+    if (WyslijKomunikat(msg_id, &msg, size) == -1) {
         if (errno != EINTR) perror("Pracownik helper msgsnd");
         return -1;
     }
     
     //Czekanie na odpowiedz pracownika
-    Komunikat res;
-    if (msgrcv(msg_id, &res, size, MSG_RES_PRACOWNIK_BASE + id_kasy, 0) == -1) {
+    MsgPracownik res;
+    if (OdbierzKomunikat(msg_id, &res, size, MSG_RES_PRACOWNIK_BASE + id_kasy, 0) == -1) {
         if (errno != EINTR) perror("Pracownik helper msgrcv");
         return -1;
     }
     
     return res.operacja; //Zwracamy wynik z pola operacja (0 to niepowodzenie, 1 to powodzenie)
+}
+
+//Globalne flagi
+static volatile sig_atomic_t g_alarm_timeout = 0;
+
+//Handler dla alarmu
+void ObslugaSIGALRM(int sig) {
+    (void)sig;
+    g_alarm_timeout = 1;
 }
 
 #ifdef PRACOWNIK_STANDALONE
@@ -52,25 +59,32 @@ int main() {
         return 1;
     }
     
-    //Obsluga sygnalow
-    struct sigaction sa;
-    sa.sa_handler = ObslugaSygnaluWyjscia;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGQUIT, &sa, NULL); 
+    //Obsluga sygnalow wyjscia
+    struct sigaction sa_exit;
+    sa_exit.sa_handler = ObslugaSygnaluWyjscia;
+    sigemptyset(&sa_exit.sa_mask);
+    sa_exit.sa_flags = 0;
+    sigaction(SIGTERM, &sa_exit, NULL);
+    sigaction(SIGQUIT, &sa_exit, NULL); 
+
+    //Obsluga sygnalu alarmu
+    struct sigaction sa_alarm;
+    sa_alarm.sa_handler = ObslugaSIGALRM;
+    sigemptyset(&sa_alarm.sa_mask);
+    sa_alarm.sa_flags = 0;
+    sigaction(SIGALRM, &sa_alarm, NULL);
     
     ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na MSGQ...");
     
     //Dolaczanie do kolejki komunikatow
-    int msg_id = msgget(GenerujKluczIPC(ID_IPC_KOLEJKA), 0600);
+    int msg_id = PobierzIdKolejki(ID_IPC_PRACOWNIK);
     if (msg_id == -1) {
         ZapiszLog(LOG_BLAD, "Pracownik obslugi: Blad dolaczenia do kolejki komunikatow!");
         OdlaczPamiecWspoldzielona(stan_sklepu);
         return 1;
     }
     
-    size_t size = sizeof(Komunikat) - sizeof(long);
+    size_t size = sizeof(MsgPracownik) - sizeof(long);
     
     while (1) {
         //Sprawdz czy koniec symulacji
@@ -79,11 +93,25 @@ int main() {
              break;
         }
         
-        Komunikat msg_in;
+        MsgPracownik msg_in;
+        //Ustawiamy alarm
+        alarm(CZAS_OCZEKIWANIA_T);
+        
         //Odbior zlecen od kas samoobslugowych
-        if (msgrcv(msg_id, &msg_in, size, MSG_TYPE_PRACOWNIK, 0) != -1) {
+        int odb_res = OdbierzKomunikat(msg_id, &msg_in, size, 0, 0);
+        
+        //Wylaczamy alarm
+        alarm(0);
+
+        if (odb_res != -1) {
             
-            int id_kasy_nadawcy = msg_in.liczba_produktow;
+            //Sprawdzamy czy komunikat nie jest za stary
+            if (time(NULL) - msg_in.timestamp > CZAS_OCZEKIWANIA_T) {
+                ZapiszLogF(LOG_OSTRZEZENIE, "Pracownik: Pominieto przedawnione zadanie od kasy %d.", msg_in.id_kasy + 1);
+                continue;
+            }
+
+            int id_kasy_nadawcy = msg_in.id_kasy;
             int operacja = msg_in.operacja;
             int wynik = 1; //Domyslnie powodzenie
             
@@ -103,19 +131,14 @@ int main() {
                 wynik = 1;
             }
             
-            //Odeslij wynik czy mozna bylo odblokowac kase samoobslugowa
-            Komunikat res;
+            //Odeslij wynik (VIP, by nie zablokowalo sie na zarezerwowanym miejscu)
+            MsgPracownik res;
             res.mtype = MSG_RES_PRACOWNIK_BASE + id_kasy_nadawcy;
             res.operacja = wynik;
-            res.liczba_produktow = id_kasy_nadawcy;
-
-            //Reszta niepotrzebnych pol
-            res.id_klienta = 0;
-            res.suma_koszyka = 0;
-            res.ma_alkohol = 0;
-            res.wiek = 0;
+            res.id_kasy = id_kasy_nadawcy;
+            res.timestamp = time(NULL);
             
-            msgsnd(msg_id, &res, size, 0);
+            WyslijKomunikatVIP(sem_id, msg_id, &res, size);
             
         } else {
             if (errno == EINTR) continue;

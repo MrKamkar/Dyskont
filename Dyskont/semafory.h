@@ -25,7 +25,10 @@
 
 #define SEM_WEJSCIE_DO_SKLEPU 9 //Sygnal wpuszczenia klienta do sklepu
 
-#define SEM_LICZBA 10 //Calkowita liczba semaforow
+#define MUTEX_KOLEJKI_VIP 10 //Mutex dla operacji VIP na kolejkach
+
+#define SEM_LICZBA 11 //Calkowita liczba semaforow
+
 
 //Makra mapujace ID kasy na odpowiedni semafor
 #define SEM_OTWORZ_KASA_STACJONARNA(id) ((id) == 0 ? SEM_OTWORZ_KASA_STACJONARNA_1 : SEM_OTWORZ_KASA_STACJONARNA_2)
@@ -38,13 +41,13 @@ union semun {
 };
 
 //Inicjalizuje semafory
-int InicjalizujSemafory();
+int InicjalizujSemafory(int max_klientow);
 
 //Dolacza do istniejacych semaforow
 int DolaczSemafory();
 
 //Zajmuje semafor => zmniejsza wartosc o 1
-int ZajmijSemafor(int sem_id, int sem_num, StanSklepu* stan);
+int ZajmijSemafor(int sem_id, int sem_num);
 
 //Zwalnia semafor => zwieksza wartosc o 1
 int ZwolnijSemafor(int sem_id, int sem_num);

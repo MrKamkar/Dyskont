@@ -23,9 +23,7 @@ static int PobierzIdSegmentu(int flagi) {
     if (klucz == -1) return -1;
     
     int shm_id = shmget(klucz, sizeof(StanSklepu), flagi);
-    if (shm_id == -1) {
-        perror("Blad shmget");
-    }
+    if (shm_id == -1) if (errno != ENOENT) perror("Blad shmget");
     return shm_id;
 }
 
@@ -120,16 +118,11 @@ void WyczyscStanSklepu(StanSklepu* stan) {
     for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
         stan->kasy_stacjonarne[i].stan = KASA_ZAMKNIETA;
         stan->kasy_stacjonarne[i].id_klienta = -1;
-        stan->kasy_stacjonarne[i].liczba_w_kolejce = 0;
     }
-
-    //Inicjalizacja kolejki samoobslugowej
-    stan->liczba_w_kolejce_samoobslugowej = 0;
 
     //Inicjalizacja licznikow
     stan->liczba_klientow_w_sklepie = 0;
     stan->liczba_czynnych_kas_samoobslugowych = MIN_KAS_SAMO_CZYNNYCH;
-    stan->flaga_ewakuacji = 0;
     stan->polecenie_kierownika = POLECENIE_BRAK;
     stan->id_kasy_do_zamkniecia = -1;
 

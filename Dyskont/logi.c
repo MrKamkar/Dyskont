@@ -34,7 +34,7 @@ static void* PetlaLoggera(void* arg) {
         czas->tm_hour,
         czas->tm_min);
     
-    int deskryptor_pliku = open(sciezka, O_WRONLY | O_CREAT, 0200);
+    int deskryptor_pliku = open(sciezka, O_WRONLY | O_CREAT, 0600);
     if (deskryptor_pliku == -1) {
         perror("Blad otwarcia pliku logow");
         pthread_exit(NULL);

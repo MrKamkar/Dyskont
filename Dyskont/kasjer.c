@@ -1,11 +1,26 @@
 #include "kasjer.h"
 #include "wspolne.h"
+#include "kolejki.h"
 #include <string.h>
 #include <signal.h>
 #include <sys/msg.h>
 
+//Zmienne globalne dla obslugi sygnalow
+static volatile sig_atomic_t g_alarm_timeout = 0;
+
+//Handler dla alarmu - przerywa msgrcv aby sprawdzic stan sklepu
+void ObslugaSIGALRM(int sig) {
+    (void)sig;
+    g_alarm_timeout = 1;
+}
+
+#ifndef KASJER_STANDALONE
+/*
+#if 0
 //Tworzy nowego kasjera
 Kasjer* StworzKasjera(int id_kasy) {
+
+
     if (id_kasy < 0 || id_kasy >= LICZBA_KAS_STACJONARNYCH) {
         return NULL;
     }
@@ -51,7 +66,7 @@ int PrzeniesKlientowDoKasy2(StanSklepu* stan, int sem_id, int msg_id) {
     if (!stan || msg_id < 0) return 0;
     
     //Blokada pamieci wspoldzielonej na czas odczytu liczby klientow
-    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan) != 0) return 0;
+    if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != 0) return 0;
     
     //Sprawdz czy Kasa 2 jest otwarta
     if (stan->kasy_stacjonarne[1].stan != KASA_WOLNA && stan->kasy_stacjonarne[1].stan != KASA_ZAJETA) {
@@ -65,8 +80,13 @@ int PrzeniesKlientowDoKasy2(StanSklepu* stan, int sem_id, int msg_id) {
         return 0;
     }
     
-    unsigned int w_kolejce = stan->kasy_stacjonarne[0].liczba_w_kolejce;
-    unsigned int w_kolejce_2 = stan->kasy_stacjonarne[1].liczba_w_kolejce;
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    return 0;
+}
+#endif
+    /*
+    //unsigned int w_kolejce = stan->kasy_stacjonarne[0].liczba_w_kolejce;
+    //unsigned int w_kolejce_2 = stan->kasy_stacjonarne[1].liczba_w_kolejce;
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     //Przenies polowe klientow z kasy 1, jesli jest miejsce w kasie 2
@@ -81,26 +101,26 @@ int PrzeniesKlientowDoKasy2(StanSklepu* stan, int sem_id, int msg_id) {
     int przeniesiono = 0;
     
     for (unsigned int i = 0; i < do_przeniesienia; i++) {
-        Komunikat msg;
+        MsgKasaStacj msg;
         //Odbierz klienta z kolejki 1
-        if (msgrcv(msg_id, &msg, sizeof(Komunikat) - sizeof(long), MSG_TYPE_KASA_1, 0) != -1) {
+        if (OdbierzKomunikat(msg_id, &msg, sizeof(MsgKasaStacj) - sizeof(long), MSG_TYPE_KASA_1, 0) != -1) {
             
             //Zmien typ na Kasa 2
             msg.mtype = MSG_TYPE_KASA_2;
             
             //Wyslij klienta do kolejki 2
-            if (msgsnd(msg_id, &msg, sizeof(Komunikat) - sizeof(long), 0) != -1) {
+            if (WyslijKomunikat(msg_id, &msg, sizeof(MsgKasaStacj) - sizeof(long)) != -1) {
                 przeniesiono++;
                 
                 //Aktualizacja licznikow po udanym przeniesieniu
-                ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
-                if (stan->kasy_stacjonarne[0].liczba_w_kolejce > 0)
-                    stan->kasy_stacjonarne[0].liczba_w_kolejce--;
-                stan->kasy_stacjonarne[1].liczba_w_kolejce++;
-                ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                //ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan);
+                //if (stan->kasy_stacjonarne[0].liczba_w_kolejce > 0)
+                //    stan->kasy_stacjonarne[0].liczba_w_kolejce--;
+                //stan->kasy_stacjonarne[1].liczba_w_kolejce++;
+                //ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             } else {
                 msg.mtype = MSG_TYPE_KASA_1;
-                msgsnd(msg_id, &msg, sizeof(Komunikat) - sizeof(long), 0);
+                WyslijKomunikat(msg_id, &msg, sizeof(MsgKasaStacj) - sizeof(long));
             }
         } 
     }
@@ -151,12 +171,23 @@ int main(int argc, char* argv[]) {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGQUIT, &sa, NULL);
-    
+    sigaction(SIGQUIT, &sa, NULL); 
+
+    struct sigaction sa_alarm;
+    sa_alarm.sa_handler = ObslugaSIGALRM;
+    sigemptyset(&sa_alarm.sa_mask);
+    sa_alarm.sa_flags = 0;
+    sigaction(SIGALRM, &sa_alarm, NULL);
+
     ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Proces uruchomiony, oczekuje na otwarcie kasy.", id_kasy + 1);
+
     
-    //Dolaczenie do kolejki komunikatow
-    int msg_id = msgget(GenerujKluczIPC(ID_IPC_KOLEJKA), 0600);
+    //Dolaczenie do odpowiedniej kolejki komunikatow
+    char id_projektu;
+    if (id_kasy == 0) id_projektu = ID_IPC_KASA_1;
+    else id_projektu = ID_IPC_KASA_2;
+    
+    int msg_id = PobierzIdKolejki(id_projektu);
     if (msg_id == -1) {
         ZapiszLogF(LOG_BLAD, "Kasjer [Kasa %d]: Blad dolaczenia do kolejki komunikatow!", id_kasy + 1);
         UsunKasjera(kasjer);
@@ -164,18 +195,18 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
+
     //Glowna petla kasjera
     while (1) {
         //Reaguj na SIGTERM lub flage ewakuacji
-        if (CZY_KONCZYC(stan_sklepu)) {
+        
             ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Otrzymano sygnal zakonczenia - koncze prace.", id_kasy + 1);
             break;
-        }
         
         //Sprawdzenie stanu kasy i polecen
-        if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan_sklepu) != 0) break;
+        if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != 0) break;
         StanKasy stan_kasy = stan_sklepu->kasy_stacjonarne[id_kasy].stan;
-        unsigned int w_kolejce = stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce;
+        //unsigned int w_kolejce = stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce;
         int polecenie = stan_sklepu->polecenie_kierownika;
         int kasa_do_zamkniecia = stan_sklepu->id_kasy_do_zamkniecia;
         
@@ -207,24 +238,38 @@ int main(int argc, char* argv[]) {
         if (stan_kasy == KASA_ZAMKNIETA) {
             
             //Czekanie na sygnal otwarcia
-            ZajmijSemafor(sem_id, SEM_OTWORZ_KASA_STACJONARNA(id_kasy), stan_sklepu);
+            ZajmijSemafor(sem_id, SEM_OTWORZ_KASA_STACJONARNA(id_kasy));
             continue;
         }
         
         //Odbierz klienta z kolejki komunikatow
-        Komunikat msg_in;
-        size_t msg_size = sizeof(Komunikat) - sizeof(long);
+        MsgKasaStacj msg_in;
+        size_t msg_size = sizeof(MsgKasaStacj) - sizeof(long);
         
-        int res = msgrcv(msg_id, &msg_in, msg_size, id_kasy + 1, 0);
+        //Ustawiamy alarm, aby nie blokowac sie w nieskonczonosc i moc np. zareagowac na ewakuacje
+        alarm(CZAS_OCZEKIWANIA_T);
+        
+        //Odbior blokujacy - moze zostac przerwany sygnalem SIGALRM
+        int res = OdbierzKomunikat(msg_id, &msg_in, msg_size, 0, 0);
+        
+        //Wylaczamy alarm
+        alarm(0);
         
         if (res != -1) {
-            //Jest klient pobrany z kolejki
+
+            //Sprawdzamy czy komunikat nie jest za stary (klient mogl juz zrezygnowac)
+            if (time(NULL) - msg_in.timestamp > CZAS_OCZEKIWANIA_T) {
+                ZapiszLogF(LOG_OSTRZEZENIE, "Kasjer %d: Pominieto przedawniony komunikat klienta %d.", id_kasy + 1, msg_in.id_klienta);
+                continue;
+            }
+
             int id_klienta = msg_in.id_klienta;
+
             int liczba_produktow = msg_in.liczba_produktow;
             double suma = msg_in.suma_koszyka;
             
             //Zaktualizuj stan kasy
-            if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan_sklepu) == 0) {
+            if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == 0) {
                 if (stan_sklepu->kasy_stacjonarne[id_kasy].stan == KASA_WOLNA) {
                     stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAJETA;
                 }
@@ -235,18 +280,21 @@ int main(int argc, char* argv[]) {
             //Symulacja obslugi klienta
             ObsluzKlienta(kasjer, id_klienta, liczba_produktow, suma, stan_sklepu);
             
-            //Wyslij potwierdzenie do klienta
-            Komunikat msg_out;
+            //Wyslij potwierdzenie do klienta (VIP, by nie blokowalo sie na zarezerwowanym miejscu)
+            MsgKasaStacj msg_out;
             msg_out.mtype = MSG_RES_STACJONARNA_BASE + id_klienta;
             msg_out.id_klienta = id_klienta;
             msg_out.liczba_produktow = id_kasy; // Zwracamy ID kasy
-            msgsnd(msg_id, &msg_out, msg_size, 0);
+            WyslijKomunikatVIP(sem_id, msg_id, &msg_out, msg_size);
+
+
+
             
             //Zwolnij kase i zaktualizuj licznik kolejki
-            if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA, stan_sklepu) == 0) {
-                if (stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce > 0) {
-                     stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce--;
-                }
+            if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == 0) {
+                //if (stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce > 0) {
+                //     stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce--;
+                //}
                 
                 //Sprawdz polecenie zamkniecia po obsluzeniu klienta
                 int polecenie = stan_sklepu->polecenie_kierownika;
@@ -256,11 +304,12 @@ int main(int argc, char* argv[]) {
                 //Reakcja na polecenie zamkniecia
                 if (polecenie == POLECENIE_ZAMKNIJ_KASE && kasa_do_zamkniecia == id_kasy && obecny_stan != KASA_ZAMKNIETA && obecny_stan != KASA_ZAMYKANA) {
 
-                    if (stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce > 0) {
+                   // if (stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce > 0) {
                         stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMYKANA;
                         obecny_stan = KASA_ZAMYKANA;
+                        int kolejka = PobierzRozmiarKolejki(msg_id);
                         ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Polecenie zamkniecia - przechodze w tryb ZAMYKANA (kolejka: %u).", 
-                                id_kasy + 1, stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce);
+                                id_kasy + 1, kolejka);
                         
                         //Wyczysc polecenie bo juz zareagowalismy na nie
                         stan_sklepu->polecenie_kierownika = POLECENIE_BRAK;
@@ -269,11 +318,11 @@ int main(int argc, char* argv[]) {
                 }
                 
                 //Logika zakonczenia obslugi
-                if (obecny_stan == KASA_ZAMYKANA && stan_sklepu->kasy_stacjonarne[id_kasy].liczba_w_kolejce == 0) {
+                //ejce == 0) {
                      
                     //Jezeli jest w trybie ZAMYKANA i kolejka jest pusta to ustawiamy stan na ZAMKNIETA
-                     stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
-                     ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Kolejka pusta - zamykam kase.", id_kasy + 1);
+                     //stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
+                    // ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Kolejka pusta - zamykam kase.", id_kasy + 1);
 
                 } else if (obecny_stan == KASA_ZAJETA) {
 
@@ -303,6 +352,16 @@ int main(int argc, char* argv[]) {
     UsunKasjera(kasjer);
     OdlaczPamiecWspoldzielona(stan_sklepu);
     
+    return 0;
+    
+}
+*/
+#endif
+
+#ifdef KASJER_STANDALONE
+int main(int argc, char* argv[]) {
+    (void)argc;
+    (void)argv;
     return 0;
 }
 #endif
