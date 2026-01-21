@@ -10,24 +10,16 @@
 #include "pamiec_wspoldzielona.h"
 
 #define MUTEX_PAMIEC_WSPOLDZIELONA 0 //Mutex chroniacy dostep do pamieci wspoldzielonej
+#define MUTEX_KOLEJKI_VIP 1 //Mutex dla operacji VIP na kolejkach
 
 //Semafory sygnalizacyjne
-#define SEM_OTWORZ_KASA_STACJONARNA_1 1 //Sygnal otwarcia kasy stacjonarnej 1
-#define SEM_OTWORZ_KASA_STACJONARNA_2 2 //Sygnal otwarcia kasy stacjonarnej 2
+#define SEM_OTWORZ_KASA_STACJONARNA_1 2 //Sygnal otwarcia kasy stacjonarnej 1
+#define SEM_OTWORZ_KASA_STACJONARNA_2 3 //Sygnal otwarcia kasy stacjonarnej 2
 
-//Semafory do otwierania kas samoobslugowych
-#define SEM_KASA_SAMOOBSLUGOWA_0 3
-#define SEM_KASA_SAMOOBSLUGOWA_1 4
-#define SEM_KASA_SAMOOBSLUGOWA_2 5
-#define SEM_KASA_SAMOOBSLUGOWA_3 6
-#define SEM_KASA_SAMOOBSLUGOWA_4 7
-#define SEM_KASA_SAMOOBSLUGOWA_5 8
+#define SEM_WEJSCIE_DO_SKLEPU 4 //Ilosc wolnych miejsc w sklepie
+#define SEM_NOWY_KLIENT 5 //Sygnal ze nowy klient wszedl (dla watku kas samoobslugowych)
 
-#define SEM_WEJSCIE_DO_SKLEPU 9 //Sygnal wpuszczenia klienta do sklepu
-
-#define MUTEX_KOLEJKI_VIP 10 //Mutex dla operacji VIP na kolejkach
-
-#define SEM_LICZBA 11 //Calkowita liczba semaforow
+#define SEM_LICZBA 6 //Calkowita liczba semaforow
 
 
 //Makra mapujace ID kasy na odpowiedni semafor
@@ -51,6 +43,9 @@ int ZajmijSemafor(int sem_id, int sem_num);
 
 //Zwalnia semafor => zwieksza wartosc o 1
 int ZwolnijSemafor(int sem_id, int sem_num);
+
+//Pobiera liczbe klientow w sklepie (Max - sem_val)
+int PobierzLiczbeKlientow(int sem_id, int max_klientow);
 
 //Usuwa semafory z systemu.
 int UsunSemafory(int sem_id);

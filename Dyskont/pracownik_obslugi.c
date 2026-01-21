@@ -19,7 +19,6 @@ int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek) {
     msg.operacja = typ_operacji;
     msg.id_kasy = id_kasy; //ID Kasy jako nadawca
     msg.wiek = wiek;
-    msg.timestamp = time(NULL);
     
     size_t size = sizeof(MsgPracownik) - sizeof(long);
     
@@ -39,16 +38,17 @@ int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek) {
     return res.operacja; //Zwracamy wynik z pola operacja (0 to niepowodzenie, 1 to powodzenie)
 }
 
-//Globalne flagi
-static volatile sig_atomic_t g_alarm_timeout = 0;
+#ifdef PRACOWNIK_STANDALONE
 
-//Handler dla alarmu
-void ObslugaSIGALRM(int sig) {
+//Zmienne globalne dla standalone
+static StanSklepu* g_stan_sklepu_pracownik = NULL;
+
+static void ObslugaSIGTERM(int sig) {
     (void)sig;
-    g_alarm_timeout = 1;
+    if (g_stan_sklepu_pracownik) OdlaczPamiecWspoldzielona(g_stan_sklepu_pracownik);
+    _exit(0);
 }
 
-#ifdef PRACOWNIK_STANDALONE
 int main() {
     //Inicjalizacja pamieci wspoldzielonej i semafora
     StanSklepu* stan_sklepu;
@@ -58,21 +58,16 @@ int main() {
     if (InicjalizujProcesPochodny(&stan_sklepu, &sem_id, "Pracownik") == -1) {
         return 1;
     }
+    g_stan_sklepu_pracownik = stan_sklepu;
     
     //Obsluga sygnalow wyjscia
-    struct sigaction sa_exit;
-    sa_exit.sa_handler = ObslugaSygnaluWyjscia;
-    sigemptyset(&sa_exit.sa_mask);
-    sa_exit.sa_flags = 0;
-    sigaction(SIGTERM, &sa_exit, NULL);
-    sigaction(SIGQUIT, &sa_exit, NULL); 
-
-    //Obsluga sygnalu alarmu
-    struct sigaction sa_alarm;
-    sa_alarm.sa_handler = ObslugaSIGALRM;
-    sigemptyset(&sa_alarm.sa_mask);
-    sa_alarm.sa_flags = 0;
-    sigaction(SIGALRM, &sa_alarm, NULL);
+    struct sigaction sa_sigterm;
+    sa_sigterm.sa_handler = ObslugaSIGTERM;
+    sigemptyset(&sa_sigterm.sa_mask);
+    sa_sigterm.sa_flags = 0;
+    sigaction(SIGTERM, &sa_sigterm, NULL);
+    sigaction(SIGQUIT, &sa_sigterm, NULL);
+    sigaction(SIGINT, &sa_sigterm, NULL);
     
     ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na MSGQ...");
     
@@ -85,32 +80,13 @@ int main() {
     }
     
     size_t size = sizeof(MsgPracownik) - sizeof(long);
+    MsgPracownik msg_in;
     
     while (1) {
-        //Sprawdz czy koniec symulacji
-        if (CZY_KONCZYC(stan_sklepu)) {
-             ZapiszLog(LOG_INFO, "Pracownik obslugi: Koniec pracy.");
-             break;
-        }
+        //Odbior zlecen od kas samoobslugowych (blokujacy)
+        int odb_msg = OdbierzKomunikat(msg_id, &msg_in, size, 0, 0);
         
-        MsgPracownik msg_in;
-        //Ustawiamy alarm
-        alarm(CZAS_OCZEKIWANIA_T);
-        
-        //Odbior zlecen od kas samoobslugowych
-        int odb_res = OdbierzKomunikat(msg_id, &msg_in, size, 0, 0);
-        
-        //Wylaczamy alarm
-        alarm(0);
-
-        if (odb_res != -1) {
-            
-            //Sprawdzamy czy komunikat nie jest za stary
-            if (time(NULL) - msg_in.timestamp > CZAS_OCZEKIWANIA_T) {
-                ZapiszLogF(LOG_OSTRZEZENIE, "Pracownik: Pominieto przedawnione zadanie od kasy %d.", msg_in.id_kasy + 1);
-                continue;
-            }
-
+        if (odb_msg != -1) {
             int id_kasy_nadawcy = msg_in.id_kasy;
             int operacja = msg_in.operacja;
             int wynik = 1; //Domyslnie powodzenie
@@ -122,29 +98,21 @@ int main() {
                 if (msg_in.wiek < 18) {
                     ZapiszLogF(LOG_INFO, "Pracownik: Weryfikacja wieku NIEUDANA (lat: %d) dla kasy %d", msg_in.wiek, id_kasy_nadawcy + 1);
                     wynik = 0;
-                } else {
-                    ZapiszLogF(LOG_INFO, "Pracownik: Weryfikacja wieku OK (lat: %d) dla kasy %d", msg_in.wiek, id_kasy_nadawcy + 1);
-                    wynik = 1;
-                }
-            } else if (operacja == OP_ODBLOKOWANIE_KASY) {
-                ZapiszLogF(LOG_INFO, "Pracownik: Odblokowanie kasy %d", id_kasy_nadawcy + 1);
-                wynik = 1;
-            }
+                } else ZapiszLogF(LOG_INFO, "Pracownik: Weryfikacja wieku OK (lat: %d) dla kasy %d", msg_in.wiek, id_kasy_nadawcy + 1);
+            } else if (operacja == OP_ODBLOKOWANIE_KASY) ZapiszLogF(LOG_INFO, "Pracownik: Odblokowanie kasy %d", id_kasy_nadawcy + 1);
             
-            //Odeslij wynik (VIP, by nie zablokowalo sie na zarezerwowanym miejscu)
+            //Odeslij wynik (VIP, by nie zablokowalo sie przy duzej liczbie klientow)
             MsgPracownik res;
             res.mtype = MSG_RES_PRACOWNIK_BASE + id_kasy_nadawcy;
             res.operacja = wynik;
             res.id_kasy = id_kasy_nadawcy;
-            res.timestamp = time(NULL);
             
             WyslijKomunikatVIP(sem_id, msg_id, &res, size);
             
         } else {
             if (errno == EINTR) continue;
-
             //Inny blad
-            perror("Pracownik msgrcv");
+            perror("Pracownik: msgrcv");
             break; 
         }
     }

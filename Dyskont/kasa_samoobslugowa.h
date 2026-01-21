@@ -6,13 +6,10 @@
 #include "pamiec_wspoldzielona.h"
 
 //Czas skanowania jednego produktu
-#define CZAS_SKANOWANIA_PRODUKTU_MS 800
+#define CZAS_SKANOWANIA_PRODUKTU_MS 1500
 
 //Szansa na losowa blokade kasy, 1 na X produktow
 #define SZANSA_BLOKADY 20
-
-//Polecenie do zamykania kasy samoobslugowej
-#define POLECENIE_ZAMKNIECIA -5
 
 //Funkcje zarzadzania kasami samoobslugowymi
 int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id);

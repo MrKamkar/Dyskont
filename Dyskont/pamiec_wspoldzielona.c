@@ -11,6 +11,11 @@ const char* NazwaKategorii(KategoriaProduktu kat) {
         case KAT_WEDLINY:  return "Wedliny";
         case KAT_NAPOJE:   return "Napoje";
         case KAT_SLODYCZE: return "Slodycze";
+        case KAT_CHEMIA:   return "Chemia";
+        case KAT_KOSMETYKI:return "Kosmetyki";
+        case KAT_MROZONKI: return "Mrozonki";
+        case KAT_ART_DOMOWE: return "Art. Domowe";
+        case KAT_EKO:      return "Eko";
         case KAT_INNE:     return "Inne";
         default:           return "Nieznana";
     }
@@ -97,7 +102,17 @@ static const Produkt DANE_PRODUKTOW[] = {
     {"Chipsy", 6.50, KAT_SLODYCZE, 150.0},
     {"Piwo Jasne", 4.50, KAT_ALKOHOL, 500.0},
     {"Wino Czerwone", 25.00, KAT_ALKOHOL, 750.0},
-    {"Wodka 0.5L", 35.00, KAT_ALKOHOL, 900.0}
+    {"Wodka 0.5L", 35.00, KAT_ALKOHOL, 900.0},
+    {"Ply do naczyn", 8.50, KAT_CHEMIA, 1000.0},
+    {"Proszek do prania", 25.00, KAT_CHEMIA, 2000.0},
+    {"Szampon", 12.00, KAT_KOSMETYKI, 400.0},
+    {"Mydlo", 3.50, KAT_KOSMETYKI, 100.0},
+    {"Pizza mrozona", 14.00, KAT_MROZONKI, 400.0},
+    {"Lody", 18.00, KAT_MROZONKI, 500.0},
+    {"Papier toaletowy", 12.00, KAT_ART_DOMOWE, 800.0},
+    {"Reczniki papierowe", 8.00, KAT_ART_DOMOWE, 600.0},
+    {"Bio Jogurt", 4.50, KAT_EKO, 150.0},
+    {"Napoj sojowy", 9.00, KAT_EKO, 1000.0}
 };
 
 //Czyszczenie struktury stanu
@@ -109,9 +124,8 @@ void WyczyscStanSklepu(StanSklepu* stan) {
 
     //Inicjalizacja kas samoobslugowych
     for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-        if (i < MIN_KAS_SAMO_CZYNNYCH) stan->kasy_samo[i].stan = KASA_WOLNA;
-        else stan->kasy_samo[i].stan = KASA_ZAMKNIETA;
-        stan->kasy_samo[i].id_klienta = -1;
+        stan->kasy_samoobslugowe[i].stan = KASA_ZAMKNIETA;
+        stan->kasy_samoobslugowe[i].id_klienta = -1;
     }
 
     //Inicjalizacja kas stacjonarnych
@@ -122,7 +136,7 @@ void WyczyscStanSklepu(StanSklepu* stan) {
 
     //Inicjalizacja licznikow
     stan->liczba_klientow_w_sklepie = 0;
-    stan->liczba_czynnych_kas_samoobslugowych = MIN_KAS_SAMO_CZYNNYCH;
+    stan->liczba_czynnych_kas_samoobslugowych = 0;
     stan->polecenie_kierownika = POLECENIE_BRAK;
     stan->id_kasy_do_zamkniecia = -1;
 

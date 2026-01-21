@@ -19,6 +19,11 @@ typedef enum {
     KAT_WEDLINY,
     KAT_NAPOJE,
     KAT_SLODYCZE,
+    KAT_CHEMIA,
+    KAT_KOSMETYKI,
+    KAT_MROZONKI,
+    KAT_ART_DOMOWE,
+    KAT_EKO,
     KAT_INNE
 } KategoriaProduktu;
 
@@ -74,7 +79,7 @@ typedef enum {
 typedef struct {
     StanKasy stan;
     int id_klienta; //ID obslugiwanego klienta
-    pid_t pid;      //PID procesu kasy
+    pid_t pid;      //PID procesu obsługującego kasę (dla kas samoobslugowych)
 } Kasa;
 
 
@@ -83,7 +88,7 @@ typedef struct {
 typedef struct {
 
     //Kasy
-    Kasa kasy_samo[LICZBA_KAS_SAMOOBSLUGOWYCH];
+    Kasa kasy_samoobslugowe[LICZBA_KAS_SAMOOBSLUGOWYCH];
     Kasa kasy_stacjonarne[LICZBA_KAS_STACJONARNYCH];
 
 

@@ -38,7 +38,4 @@ int ZostawMiejsceWKolejce(int msg_id, size_t msg_size);
 //Wysyla komunikat z tymczasowym podniesieniem limitu (dla odpowiedzi)
 int WyslijKomunikatVIP(int sem_id, int msg_id, void* msg, size_t size);
 
-
-
-
 #endif

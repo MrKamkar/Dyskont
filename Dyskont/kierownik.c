@@ -3,185 +3,89 @@
 #include "kolejki.h"
 #include <string.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <signal.h>
 
-#if 0
-/*
+#ifdef KIEROWNIK_STANDALONE
+
+//Zmienne globalne
+static StanSklepu* g_stan_sklepu = NULL;
+static int g_sem_id = -1;
+
 //Wyswietla menu kierownika
 void WyswietlMenu() {
-    printf("PANEL KIEROWNIKA SKLEPU:\n");
-    printf("    1. Otworz kase stacjonarna 2\n");
-    printf("    2. Zamknij kase stacjonarna 1\n");
-    printf("    3. Zamknij kase stacjonarna 2\n");
-    printf("    4. EWAKUACJA (zamknij sklep)\n");
-    printf("    5. Pokaz status kas\n");
-    printf("    0. Wyjscie\n");
+    printf("\n=== PANEL KIEROWNIKA ===\n");
+    printf("  1. Otworz kase stacjonarna 2\n");
+    printf("  2. Zamknij kase stacjonarna 1\n");
+    printf("  3. Zamknij kase stacjonarna 2\n");
+    printf("  4. EWAKUACJA (SIGTERM)\n");
+    printf("  5. Pokaz status kolejek\n");
+    printf("  0. Wyjscie\n");
     printf("Wybor: ");
+    fflush(stdout);
 }
 
-//Otwiera kase stacjonarna 2
-void OtworzKase2(StanSklepu* stan, int sem_id) {
-    if (!stan) return;
-    
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    
-    if (stan->kasy_stacjonarne[1].stan == KASA_ZAMKNIETA) {
-        stan->kasy_stacjonarne[1].stan = KASA_WOLNA;
-        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        
-        //Sygnal dla kasjera ze kasa jest otwarta
-        ZwolnijSemafor(sem_id, SEM_OTWORZ_KASA_STACJONARNA_2);
-        
-        ZapiszLog(LOG_INFO, "Kierownik: Otwarto kase stacjonarna 2.");
-        printf("Kasa stacjonarna 2 zostala otwarta.\n");
-    } else {
-        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        printf("Kasa stacjonarna 2 jest juz otwarta lub zajeta.\n");
-    }
-}
-
-//Zamyka wskazana kase stacjonarna, niewpuszczajac nowych klientow
-void ZamknijKase(int id_kasy, StanSklepu* stan, int sem_id) {
-    if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_STACJONARNYCH) return;
-    
-    char buf[256];
-    
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    StanKasy aktualny_stan = stan->kasy_stacjonarne[id_kasy].stan;
-    // int w_kolejce = stan->kasy_stacjonarne[id_kasy].liczba_w_kolejce;
-    int w_kolejce = 0; // Liczba osob w kolejce nieznana (IPC)
-    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    
-    if (aktualny_stan == KASA_ZAMKNIETA) {
-        printf("Kasa stacjonarna %d jest juz zamknieta.\n", id_kasy + 1);
-        return;
-    }
-    
-    if (w_kolejce > 0) {
-        sprintf(buf, "Kierownik: Polecenie zamkniecia kasy %d (czeka: %d klientow - zostana obsluzeni).",
-                id_kasy + 1, w_kolejce);
-        ZapiszLog(LOG_INFO, buf);
-        printf("Kasa %d zostanie zamknieta po obsluzeniu %d klientow.\n", id_kasy + 1, w_kolejce);
-        
-        //Ustawiamy polecenie, kasjer sam zamknie kase po obsluzeniu klientow w kolejce
-        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        stan->polecenie_kierownika = POLECENIE_ZAMKNIJ_KASE;
-        stan->id_kasy_do_zamkniecia = id_kasy;
-        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    } else {
-
-        //Mozna zamknac od razu
-        ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        stan->kasy_stacjonarne[id_kasy].stan = KASA_ZAMKNIETA;
-        ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        
-        sprintf(buf, "Kierownik: Zamknieto kase stacjonarna %d.", id_kasy + 1);
-        ZapiszLog(LOG_INFO, buf);
-        printf("Kasa stacjonarna %d zostala zamknieta.\n", id_kasy + 1);
-    }
-}
-
-//Wydaje polecenie
-void WydajPolecenie(PolecenieKierownika polecenie, int id_kasy, StanSklepu* stan, int sem_id) {
-    if (!stan) return;
-    
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    stan->polecenie_kierownika = polecenie;
-    stan->id_kasy_do_zamkniecia = id_kasy;
-    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-}
-
-//Wyswietla status kas
-void PokazStatusKas(StanSklepu* stan, int sem_id) {
-    if (!stan) return;
-    
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    
-    printf("\n--- STATUS KAS ---\n");
-    printf("Klientow w sklepie: %u\n\n", stan->liczba_klientow_w_sklepie);
-    
-    printf("KASY STACJONARNE:\n");
-    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
-        const char* status;
-        switch (stan->kasy_stacjonarne[i].stan) {
-            case KASA_ZAMKNIETA:
-                status = "ZAMKNIETA";
-                break;
-            case KASA_WOLNA:
-            case KASA_ZAJETA:
-                status = "CZYNNA";
-                break;
-            case KASA_ZAMYKANA: 
-                status = "ZAMYKANA";
-                break;
-            default: status = "NIEZNANY";
-        }
-        printf("  Kasa %d: %s (Max: %u)\n", 
-               i + 1, status, MAX_KOLEJKA_STACJONARNA);
-               // stan->kasy_stacjonarne[i].liczba_w_kolejce, MAX_KOLEJKA_STACJONARNA);
-    }
-    
-    printf("\nKASY SAMOOBSLUGOWE:\n");
-    int zajete = 0;
-    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-        if (stan->kasy_samo[i].stan == KASA_ZAJETA) zajete++;
-    }
-    printf("  Zajętych: %d/%d\n", zajete, stan->liczba_czynnych_kas_samoobslugowych);
-    //printf("  W kolejce: %u/%u\n", stan->liczba_w_kolejce_samoobslugowej, MAX_KOLEJKA_SAMOOBSLUGOWA);
-    
-    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    
-    //Pobranie ID kolejek by sprawdzic stan
+//Wyswietla status kolejek (przez msgctl)
+static void PokazStatusKolejek() {
     int msg_id_1 = PobierzIdKolejki(ID_IPC_KASA_1);
     int msg_id_2 = PobierzIdKolejki(ID_IPC_KASA_2);
     int msg_id_samo = PobierzIdKolejki(ID_IPC_SAMO);
 
-    printf("\n--- STATUS KOLEJEK (IPC msgctl) ---\n");
-    printf("  Kasa 1: %d osob\n", PobierzRozmiarKolejki(msg_id_1));
-    printf("  Kasa 2: %d osob\n", PobierzRozmiarKolejki(msg_id_2));
-    printf("  Samoobslugowa: %d osob\n", PobierzRozmiarKolejki(msg_id_samo)); 
-
-    printf("------------------\n");
+    printf("\n--- STATUS KOLEJEK (msgctl) ---\n");
+    printf("  Kasa stacjonarna 1: %d osob\n", PobierzRozmiarKolejki(msg_id_1));
+    printf("  Kasa stacjonarna 2: %d osob\n", PobierzRozmiarKolejki(msg_id_2));
+    printf("  Kasy samoobslugowe: %d osob\n", PobierzRozmiarKolejki(msg_id_samo));
+    
+    //Status kas z pamieci wspoldzielonej
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    int klienci = PobierzLiczbeKlientow(g_sem_id, g_stan_sklepu->max_klientow_rownoczesnie);
+    printf("\n--- STATUS KAS ---\n");
+    printf("  Klienci w sklepie: %d\n", klienci);
+    printf("  Kasy samoobslugowe czynne: %u/%d\n", 
+           g_stan_sklepu->liczba_czynnych_kas_samoobslugowych, LICZBA_KAS_SAMOOBSLUGOWYCH);
+    
+    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
+        const char* status;
+        switch (g_stan_sklepu->kasy_stacjonarne[i].stan) {
+            case KASA_ZAMKNIETA: status = "ZAMKNIETA"; break;
+            case KASA_WOLNA: status = "WOLNA"; break;
+            case KASA_ZAJETA: status = "ZAJETA"; break;
+            case KASA_ZAMYKANA: status = "ZAMYKANA"; break;
+            default: status = "?"; break;
+        }
+        printf("  Kasa stacjonarna %d: %s\n", i + 1, status);
+    }
+    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    
+    printf("-------------------------------\n");
 }
 
-//Glowna funkcja procesu kierownika
-#ifdef KIEROWNIK_STANDALONE
 int main() {
-    StanSklepu* stan_sklepu;
-    int sem_id;
-    
-    if (InicjalizujProcesPochodny(&stan_sklepu, &sem_id, "Kierownik") == -1) {
-        fprintf(stderr, "Upewnij sie, ze symulacja (dyskont.out) jest uruchomiona.\n");
+    //Inicjalizacja procesu pochodnego
+    if (InicjalizujProcesPochodny(&g_stan_sklepu, &g_sem_id, "Kierownik") == -1) {
+        fprintf(stderr, "Blad: Upewnij sie, ze symulacja (dyskont.out) jest uruchomiona.\n");
         return 1;
     }
     
-    pid_t pid_glowny = stan_sklepu->pid_glowny;
+    pid_t pid_glowny = g_stan_sklepu->pid_glowny;
     if (pid_glowny <= 0) {
-        fprintf(stderr, "Kierownik: Blad - nie znaleziono PID glownego procesu\n");
-        OdlaczPamiecWspoldzielona(stan_sklepu);
+        fprintf(stderr, "Blad: Nie znaleziono PID glownego procesu.\n");
+        OdlaczPamiecWspoldzielona(g_stan_sklepu);
         return 1;
     }
     
-    ZapiszLog(LOG_INFO, "Kierownik: Proces uruchomiony.");
-    printf("Panel kierownika uruchomiony. Polaczono z symulacja.\n");
-    printf("PID procesu glownego: %d\n\n", pid_glowny);
+    printf("Panel kierownika uruchomiony.\n");
+    printf("PID procesu glownego: %d\n", pid_glowny);
     
     int wybor;
     int dzialaj = 1;
     
     while (dzialaj) {
-        //Sprawdz czy symulacja nadal dziala
-        if (stan_sklepu->flaga_ewakuacji) {
-            printf("Symulacja zostala zakonczona (ewakuacja). Zamykam panel.\n");
-            break;
-        }
-        
         WyswietlMenu();
         
         if (scanf("%d", &wybor) != 1) {
-            //Czyszczenie bufora
             while (getchar() != '\n');
-            printf("Nieprawidlowy wybor. Sprobuj ponownie.\n");
+            printf("Nieprawidlowy wybor.\n");
             continue;
         }
         
@@ -189,44 +93,48 @@ int main() {
             case 0:
                 dzialaj = 0;
                 printf("Zamykam panel kierownika.\n");
-                ZapiszLog(LOG_INFO, "Kierownik: Zakonczono prace.");
                 break;
                 
             case 1:
-                //Wyslij sygnal SIGUSR1, otwieranie kasy 2
+                //SIGUSR1 - otwieranie kasy 2
                 if (kill(pid_glowny, SIGUSR1) == 0) {
-                    printf("Wyslano sygnal SIGUSR1 - otwieranie kasy 2.\n");
+                    printf("Wyslano SIGUSR1 - otwieranie kasy 2.\n");
                 } else {
-                    perror("Blad wysylania sygnalu SIGUSR1");
+                    perror("Blad wysylania SIGUSR1");
                 }
                 break;
                 
             case 2:
-                //Wyslij sygnal SIGUSR2, zamykanie kasy 1
+                //SIGUSR2 - zamykanie kasy 1
+                ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                g_stan_sklepu->id_kasy_do_zamkniecia = 0;
+                ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                
                 if (kill(pid_glowny, SIGUSR2) == 0) {
-                    printf("Wyslano sygnal SIGUSR2 - zamykanie kasy 1.\n");
+                    printf("Wyslano SIGUSR2 - zamykanie kasy 1.\n");
                 } else {
-                    perror("Blad wysylania sygnalu SIGUSR2");
+                    perror("Blad wysylania SIGUSR2");
                 }
                 break;
                 
             case 3:
-                //Zamykanie kasy 2 przez pamiec wspoldzielona, polecenie
-                ZamknijKase(1, stan_sklepu, sem_id);
+                //Zamykanie kasy 2
+                ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                g_stan_sklepu->id_kasy_do_zamkniecia = 1;
+                g_stan_sklepu->polecenie_kierownika = POLECENIE_ZAMKNIJ_KASE;
+                ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+                printf("Wyslano polecenie zamkniecia kasy 2.\n");
                 break;
                 
             case 4:
-                printf("Czy na pewno chcesz oglosic ewakuacje? (1 => tak, 0 => nie): ");
+                printf("Czy na pewno chcesz oglosic EWAKUACJE? (1=tak, 0=nie): ");
                 int potwierdz;
                 if (scanf("%d", &potwierdz) == 1 && potwierdz == 1) {
-
-                    //Wyslij sygnal SIGTERM, ewakuacja
                     if (kill(pid_glowny, SIGTERM) == 0) {
-                        printf("Wyslano sygnal SIGTERM - EWAKUACJA!\n");
-                        ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: EWAKUACJA! Wyslano sygnal SIGTERM.");
+                        printf("Wyslano SIGTERM - EWAKUACJA!\n");
                         dzialaj = 0;
                     } else {
-                        perror("Blad wysylania sygnalu SIGTERM");
+                        perror("Blad wysylania SIGTERM");
                     }
                 } else {
                     printf("Anulowano.\n");
@@ -234,22 +142,15 @@ int main() {
                 break;
                 
             case 5:
-                PokazStatusKas(stan_sklepu, sem_id);
+                PokazStatusKolejek();
                 break;
                 
             default:
-                printf("Nieprawidlowy wybor. Sprobuj ponownie.\n");
+                printf("Nieprawidlowy wybor.\n");
         }
     }
     
-    OdlaczPamiecWspoldzielona(stan_sklepu);
-    return 0;
-}
-*/
-#endif
-
-#ifdef KIEROWNIK_STANDALONE
-int main() {
+    OdlaczPamiecWspoldzielona(g_stan_sklepu);
     return 0;
 }
 #endif

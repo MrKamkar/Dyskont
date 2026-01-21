@@ -10,8 +10,9 @@
 //Zmienne globalne dla obslugi sygnalow
 static StanSklepu* g_stan_sklepu = NULL;
 static int g_sem_id = -1;
-static int g_is_parent = 1; //Domyslnie jestesmy rodzicem (Generatorem)
+static int g_czy_rodzic = 1; //Domyslnie jestesmy rodzicem (Generatorem)
 static volatile sig_atomic_t g_alarm_timeout = 0;
+static int g_cichy_tryb = 0; //Tryb cichy - brak paragonow na konsoli
 
 //Stworzenie klienta
 Klient* StworzKlienta(int id) {
@@ -67,13 +68,24 @@ void ZrobZakupy(Klient* k, const StanSklepu* stan_sklepu) {
         //Symulacja chodzenia po sklepie i wyboru produktu (od 3 do 15 sekund)
         SYMULACJA_USLEEP(stan_sklepu, (3000000 + (rand() % 12000001)));
 
+        //Znajdz produkty z kategorii, ktorych klient jeszcze nie ma
+        int dostepne_indeksy[MAX_PRODUKTOW];
+        int liczba_dostepnych = 0;
+
+        for (unsigned int i = 0; i < stan_sklepu->liczba_produktow; i++) {
+            if (!CzyMaKategorie(k, stan_sklepu->magazyn[i].kategoria)) {
+                dostepne_indeksy[liczba_dostepnych++] = i;
+            }
+        }
+
         //Wybor produktu
         int indeks = 0;
-        for (int proby = 0; proby < 20; proby++) {
+        if (liczba_dostepnych > 0) {
+            //Wybierz losowy produkt z nowej kategorii
+            indeks = dostepne_indeksy[rand() % liczba_dostepnych];
+        } else {
+            //Jesli klient ma juz wszystkie kategorie (niemozliwe przy obecnych ustawieniach)
             indeks = rand() % stan_sklepu->liczba_produktow;
-            if (!CzyMaKategorie(k, stan_sklepu->magazyn[indeks].kategoria)) {
-                break;
-            }
         }
         
         k->koszyk[k->liczba_produktow++] = stan_sklepu->magazyn[indeks];
@@ -97,7 +109,7 @@ double ObliczSumeKoszyka(const Klient* k) {
 
 //Wydrukowanie paragonu
 void WydrukujParagon(const Klient* k, const char* typ_kasy, int id_kasy) {
-    if (!k) return;
+    if (!k || g_cichy_tryb) return;
     
     printf("\n========== PARAGON ==========\n");
     printf("Klient ID: %d | %s %d\n", k->id, typ_kasy, id_kasy);
@@ -126,13 +138,15 @@ void ObslugaSIGALRM(int sig) {
 void ObslugaSIGTERM(int sig) {
     (void)sig;
 
-    if (!g_is_parent) {
+    if (!g_czy_rodzic) {
         if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
         _exit(1); //Kod 1 oznacza ewakuacje
     }
 
-    //Ignorujemy SIGTERM zeby kill(0, SIGTERM) nas nie zabil
+    //Rodzic ignoruje kolejne sygnaly
     signal(SIGTERM, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
+    signal(SIGQUIT, SIG_IGN);
     
     //Wyslij SIGTERM do calej grupy procesow (czyli do wszystkich dzieci)
     kill(0, SIGTERM);
@@ -159,6 +173,14 @@ int main(int argc, char* argv[]) {
     }
     
     int pula_klientow = atoi(argv[1]);
+    
+    //Sprawdzenie argumentu -quiet (przekazany przez main.c)
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "-quiet") == 0) {
+            g_cichy_tryb = 1;
+            break;
+        }
+    }
     
     //Inicjalizacja systemu logowania
     InicjalizujSystemLogowania(argv[0]);
@@ -191,7 +213,7 @@ int main(int argc, char* argv[]) {
         pid_t pid = fork();
         if(pid == 0) {
             //Ustawiamy flage rodzica na 0
-            g_is_parent = 0;
+            g_czy_rodzic = 0;
 
             srand(time(NULL) ^ getpid());
             
@@ -213,6 +235,9 @@ int main(int argc, char* argv[]) {
             }
 
             ZapiszLogF(LOG_INFO, "Klient [ID: %d] wszedl do sklepu. Wiek: %u lat. Planuje kupic %u produktow.", klient->id, klient->wiek, klient->ilosc_planowana);
+
+            //Sygnal dla watku managera kas samoobslugowych ze klient wszedl
+            ZwolnijSemafor(g_sem_id, SEM_NOWY_KLIENT);
 
             ZapiszLog(LOG_INFO, "Klient rozpoczyna zakupy..");
             ZrobZakupy(klient, g_stan_sklepu);
@@ -238,50 +263,75 @@ int main(int argc, char* argv[]) {
 
                     ZapiszLogF(LOG_INFO, "Klient [ID: %d] ustawia sie w kolejce do kasy samoobslugowej.", klient->id);
 
-                    //Ustawiamy alarm, aby dac maksymalny CZAS_OCZEKIWANIA_T na zwolnienie sie kasy samoobslugowej
+                    //Alarm na cale oczekiwanie (wejscie do kolejki + obsluga)
                     g_alarm_timeout = 0;
                     alarm(CZAS_OCZEKIWANIA_T);
 
+                    int sukces = 0;
+                    int id_kasy_samo = -1;
                     if (WyslijKomunikat(msg_id_samo, &msg, sizeof(MsgKasaSamo) - sizeof(long)) == 0) {
-                        alarm(0); //Wylaczamy alarm po udanym wyslaniu
-                        
-                        //Teraz czekamy na odpowiedz
+                        //Czekamy na odpowiedz (tez z alarmem)
                         MsgKasaSamo res;
                         if (OdbierzKomunikat(msg_id_samo, &res, sizeof(MsgKasaSamo) - sizeof(long), MSG_RES_SAMOOBSLUGA_BASE + klient->id, 0) == 0) {
-                            WydrukujParagon(klient, "Kasa Samoobslugowa", res.liczba_produktow);
+                            alarm(0);
+                            g_alarm_timeout = 0; //Reset flagi po sukcesie
+                            id_kasy_samo = res.liczba_produktow;
+                            sukces = 1;
                         }
-                    } else {
-                        alarm(0); //Wylaczamy alarm w razie bledu
-                        if (errno == EINTR && g_alarm_timeout) {
-                            ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] - timeout przy dolaczaniu do samoobslugi (PELNA), idzie do stacjonarnej.", klient->id);
-                            idzie_do_samoobslugowej = 0;
-                        } else {
-                            ZapiszLogF(LOG_BLAD, "Klient [ID: %d] - blad wysylania komunikatu do kasy samoobslugowej (errno: %d)", klient->id, errno);
-                        }
+                    }
+                    
+                    alarm(0);
+                    
+                    if (sukces) {
+                        //Sukces - drukujemy paragon i konczymy
+                        WydrukujParagon(klient, "Kasa Samoobslugowa", id_kasy_samo + 1);
+                    } else if (errno == EINTR && g_alarm_timeout) {
+                        ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] - timeout w kolejce samoobslugowej, idzie do stacjonarnej.", klient->id);
+                        idzie_do_samoobslugowej = 0;
+                    } else if (!g_alarm_timeout) {
+                        //Blad IPC lub ewakuacja
+                        ZapiszLogF(LOG_BLAD, "Klient [ID: %d] - blad IPC kasy samoobslugowej (errno: %d)", klient->id, errno);
                     }
                 }
 
-            }/* else {
-                //Kasy stacjonarne (uproszczone dla demo)
-                int msg_id_kasa = PobierzIdKolejki(ID_IPC_KASA_1);
-                if (msg_id_kasa != -1) {
-                    MsgKasaStacj msg;
-                    msg.mtype = MSG_TYPE_KASA_1;
-                    msg.id_klienta = klient->id;
-                    msg.liczba_produktow = klient->liczba_produktow;
-                    msg.suma_koszyka = ObliczSumeKoszyka(klient);
-                    msg.ma_alkohol = ma_alkohol;
-                    msg.wiek = klient->wiek;
-                    msg.timestamp = time(NULL);
 
-                    if (WyslijKomunikat(msg_id_kasa, &msg, sizeof(MsgKasaStacj) - sizeof(long)) == 0) {
-                        MsgKasaStacj res;
-                        if (OdbierzKomunikat(msg_id_kasa, &res, sizeof(MsgKasaStacj) - sizeof(long), MSG_RES_STACJONARNA_BASE + klient->id, 0) == 0) {
-                             WydrukujParagon(klient, "Kasa Stacjonarna", res.liczba_produktow + 1);
-                        }
+            } else {
+                //Kasy stacjonarne - wybieramy kase z mniejsza kolejka
+                int msg_id_1 = PobierzIdKolejki(ID_IPC_KASA_1);
+                int msg_id_2 = PobierzIdKolejki(ID_IPC_KASA_2);
+                
+                int rozmiar_1 = PobierzRozmiarKolejki(msg_id_1);
+                int rozmiar_2 = PobierzRozmiarKolejki(msg_id_2);
+                
+                //Wybieramy kase z mniejsza kolejka, domyslnie kasa 1
+                int msg_id_kasa = msg_id_1;
+                long mtype = MSG_TYPE_KASA_1;
+                int numer_kasy = 1;
+                
+                if (rozmiar_2 >= 0 && rozmiar_2 < rozmiar_1) {
+                    msg_id_kasa = msg_id_2;
+                    mtype = MSG_TYPE_KASA_2;
+                    numer_kasy = 2;
+                }
+                
+                ZapiszLogF(LOG_INFO, "Klient [ID: %d] ustawia sie w kolejce do kasy stacjonarnej %d.", klient->id, numer_kasy);
+                
+                MsgKasaStacj msg;
+                msg.mtype = mtype;
+                msg.id_klienta = klient->id;
+                msg.liczba_produktow = klient->liczba_produktow;
+                msg.suma_koszyka = ObliczSumeKoszyka(klient);
+                msg.ma_alkohol = ma_alkohol;
+                msg.wiek = klient->wiek;
+
+                if (WyslijKomunikat(msg_id_kasa, &msg, sizeof(MsgKasaStacj) - sizeof(long)) == 0) {
+                    MsgKasaStacj res;
+                    if (OdbierzKomunikat(msg_id_kasa, &res, sizeof(MsgKasaStacj) - sizeof(long), MSG_RES_STACJONARNA_BASE + klient->id, 0) == 0) {
+                         ZapiszLogF(LOG_INFO, "Klient [ID: %d] zakonczyl zakupy przy kasie stacjonarnej %d.", klient->id, res.liczba_produktow + 1);
+                         WydrukujParagon(klient, "Kasa Stacjonarna", res.liczba_produktow + 1);
                     }
                 }
-            }*/
+            }
 
 
 

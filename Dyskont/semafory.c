@@ -42,10 +42,8 @@ int InicjalizujSemafory(int max_klientow) {
     wartosci[SEM_OTWORZ_KASA_STACJONARNA_1] = 0;
     wartosci[SEM_OTWORZ_KASA_STACJONARNA_2] = 0;
     
-    //Semafory dla kas samoobslugowych
-    for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
-        wartosci[SEM_KASA_SAMOOBSLUGOWA_0 + i] = 0;
-    }
+    //Semafor nowego klienta
+    wartosci[SEM_NOWY_KLIENT] = 0;
     
     //Semafor wpuszczajacy klientow (Max klientow w sklepie)
     if (max_klientow > 0) wartosci[SEM_WEJSCIE_DO_SKLEPU] = (unsigned short)max_klientow;
@@ -84,6 +82,24 @@ int ZajmijSemafor(int sem_id, int sem_num) {
 //Zwalnia semafor
 int ZwolnijSemafor(int sem_id, int sem_num) {
     return OperacjaSemafor(sem_id, sem_num, 1, "Blad zwalniania semafora");
+}
+
+//Pobiera liczbe klientow w sklepie na podstawie wartosci semafora
+int PobierzLiczbeKlientow(int sem_id, int max_klientow) {
+    if (sem_id == -1) return 0;
+    
+    //Pobierz aktualna wartosc semafora (wolne miejsca)
+    int wolne_miejsca = semctl(sem_id, SEM_WEJSCIE_DO_SKLEPU, GETVAL);
+    if (wolne_miejsca == -1) {
+        perror("Blad semctl GETVAL (PobierzLiczbeKlientow)");
+        return 0;
+    }
+    
+    int klienci = max_klientow - wolne_miejsca;
+    if (klienci < 0) klienci = 0;
+    if (klienci > max_klientow) klienci = max_klientow; //Zabezpieczenie
+    
+    return klienci;
 }
 
 //Usuniecie zestawu semaforow

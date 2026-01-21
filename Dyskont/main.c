@@ -20,13 +20,13 @@ static int g_msg_id_2 = -1;
 static int g_msg_id_samo = -1;
 static int g_msg_id_prac = -1;
 
-static int g_is_parent = 1; //Flaga mowiaca czy jestesmy w glownym procesie
+static int g_czy_rodzic = 1; //Flaga mowiaca czy jestesmy w glownym procesie
 
 //PIDy procesow potomnych
 static pid_t g_pid_kasjerow[LICZBA_KAS_STACJONARNYCH];
+static pid_t g_pid_manager_samoobslugowych;
 static pid_t g_pid_pracownika;
 static pid_t g_pid_generatora_klientow;
-static pid_t g_pid_generator_kas_samoobslugowych;
 
 //Funkcja sprzatajaca zasoby IPC
 static void PosprzatajZasobyIPC() {
@@ -58,36 +58,48 @@ void* WatekSprzatajacy(void* arg) {
     pid_t wynik;
 
     //Tylko proces glowny moze sprzatac zasoby systemowe
-    if (!g_is_parent) {
+    if (!g_czy_rodzic) {
         if(g_stan_sklepu) UsunPamiecWspoldzielona();
         _exit(1);
     }
 
+    int status;
+    
+    //Czyszczenie generatora klientow
+    kill(g_pid_generatora_klientow, SIGTERM);
+    wynik = waitpid(g_pid_generatora_klientow, &status, 0);
+    if (wynik > 0) {
+        if (WIFEXITED(status)) ZapiszLogF(LOG_INFO, "Generator klientow [PID: %d] zakonczony (status: %d)", wynik, WEXITSTATUS(status));
+        else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Generator klientow [PID: %d] zabity sygnalem %d", wynik, WTERMSIG(status));
+    } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Proces generatora klientow zostal juz zakonczony wczesniej.");
+
     //Czyszczenie kasjerow
     for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
         kill(g_pid_kasjerow[i], SIGTERM);
-        wynik = waitpid(g_pid_kasjerow[i], NULL, 0);
-        if (wynik > 0) ZapiszLogF(LOG_INFO, "Zakończenie procesu kasjera [Kasa %d]", i + 1);
-        else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Proces kasjera [Kasa %d] został już zakończony wczesniej.", i + 1);
+        wynik = waitpid(g_pid_kasjerow[i], &status, 0);
+        if (wynik > 0) {
+            if (WIFEXITED(status)) ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d, PID: %d] zakonczony (status: %d)", i + 1, wynik, WEXITSTATUS(status));
+            else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d, PID: %d] zabity sygnalem %d", i + 1, wynik, WTERMSIG(status));
+        } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d] zostal juz zakonczony wczesniej.", i + 1);
     }
 
-    //Czyszczenie kas samoobslugowych i pracownika
+    //Czyszczenie kas samoobslugowych
+    kill(g_pid_manager_samoobslugowych, SIGTERM);
+    wynik = waitpid(g_pid_manager_samoobslugowych, &status, 0);
+    if (wynik > 0) {
+        if (WIFEXITED(status)) ZapiszLogF(LOG_INFO, "Manager kas samoobslugowych [PID: %d] zakonczony (status: %d)", wynik, WEXITSTATUS(status));
+        else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Manager kas samoobslugowych [PID: %d] zabity sygnalem %d", wynik, WTERMSIG(status));
+    } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Manager kas samoobslugowych zostal juz zakonczony wczesniej.");
+
+    //Czyszczenie pracownika
     kill(g_pid_pracownika, SIGTERM);
-    wynik = waitpid(g_pid_pracownika, NULL, 0);
-    if (wynik > 0) ZapiszLogF(LOG_INFO, "Zakończenie procesu pracownika.");
-    else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Proces pracownika został już zakończony wczesniej.");
-
-    //Czyszczenie generatora klientow
-    kill(g_pid_generatora_klientow, SIGTERM);
-    wynik = waitpid(g_pid_generatora_klientow, NULL, 0);
-    if (wynik > 0) ZapiszLogF(LOG_INFO, "Zakończenie procesu generatora klientow.");
-    else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Proces generatora klientow został już zakończony wczesniej.");
-
-    //Czyszczenie managera kas samoobslugowych
-    kill(g_pid_manager_samo, SIGTERM);
-    wynik = waitpid(g_pid_manager_samo, NULL, 0);
-    if (wynik > 0) ZapiszLogF(LOG_INFO, "Zakończenie procesu managera kas samoobslugowych.");
-    else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Proces managera kas samoobslugowych został już zakończony wczesniej.");
+    wynik = waitpid(g_pid_pracownika, &status, 0);
+    if (wynik > 0) {
+        if (WIFEXITED(status)) ZapiszLogF(LOG_INFO, "Pracownik obslugi [PID: %d] zakonczony (status: %d)", wynik, WEXITSTATUS(status));
+        else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Pracownik obslugi [PID: %d] zabity sygnalem %d", wynik, WTERMSIG(status));
+    } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Pracownik obslugi zostal juz zakonczony wczesniej.");
+    
+    return NULL;
 }
 
 //Sygnal do otwarcia kasy stacjonarnej 2
@@ -159,7 +171,7 @@ void ObslugaSIGTERM(int sig) {
 int main(int argc, char* argv[]) {
 
     //Pobranie czasu symulacji i opcjonalnych argumentow
-    if (argc <= 3) {
+    if (argc <= 2) {
         fprintf(stderr, "Uzycie: %s <pula_klientow> <max_klientow_sklep> <nr_testu*>\n", argv[0]);
         fprintf(stderr, "<pula_klientow> - calkowita liczba klientow do stworzenia\n");
         fprintf(stderr, "<max_klientow> - max klientow w sklepie rownoczesnie\n");
@@ -184,7 +196,7 @@ int main(int argc, char* argv[]) {
 
     //Opcjonalny tryb testu
     int tryb_testu = 0;
-    if (argc == 4) {
+    if (argc >= 4) {
         tryb_testu = atoi(argv[3]);
         if (tryb_testu < 0 || tryb_testu > 1) {
             fprintf(stderr, "Blad: Nieprawidlowy tryb testu (dozwolone: 0, 1)\n");
@@ -243,8 +255,8 @@ int main(int argc, char* argv[]) {
     g_msg_id_prac = StworzKolejke(ID_IPC_PRACOWNIK);
 
     //Ograniczamy pojemnosc kolejek komunikatow o 1 miejsce, aby uniknac deadloku
-    ZostawMiejsceWKolejce(g_msg_id_1, sizeof(MsgKasaStac) - sizeof(long));
-    ZostawMiejsceWKolejce(g_msg_id_2, sizeof(MsgKasaStac) - sizeof(long));
+    ZostawMiejsceWKolejce(g_msg_id_1, sizeof(MsgKasaStacj) - sizeof(long));
+    ZostawMiejsceWKolejce(g_msg_id_2, sizeof(MsgKasaStacj) - sizeof(long));
     ZostawMiejsceWKolejce(g_msg_id_samo, sizeof(MsgKasaSamo) - sizeof(long));
     ZostawMiejsceWKolejce(g_msg_id_prac, sizeof(MsgPracownik) - sizeof(long));
 
@@ -269,7 +281,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         if (g_pid_kasjerow[i] == 0) {
-            g_is_parent = 0; //Dziecko nie moze sprzatac zasobow
+            g_czy_rodzic = 0; //Dziecko nie moze sprzatac zasobow
 
             char id_str[16];
             sprintf(id_str, "%d", i); //ID kasjera
@@ -282,10 +294,30 @@ int main(int argc, char* argv[]) {
         }
         else {
             //Przekazanie informacji o poprawnym uruchomieniu procesu kasjera
-            char buf[256];
-            sprintf(buf, "Uruchomiono proces kasjera [PID: %d, Kasa: %d]", g_pid_kasjerow[i], i + 1);
-            ZapiszLog(LOG_INFO, buf);
+            ZapiszLogF(LOG_INFO, "Uruchomiono proces kasjera [PID: %d, Kasa: %d]", g_pid_kasjerow[i], i + 1);
         }
+    }
+
+    //URUCHOMIENIE MANAGERA KAS SAMOOBSLUGOWYCH
+    g_pid_manager_samoobslugowych = fork();
+    if (g_pid_manager_samoobslugowych == -1) {
+        perror("Blad fork() dla managera kas samoobslugowych");
+        ObslugaSIGTERM(0);
+        PosprzatajZasobyIPC();
+        return 1;
+    }
+    else if (g_pid_manager_samoobslugowych == 0) {
+        g_czy_rodzic = 0;
+
+        execl("./kasa_samoobslugowa", "kasa_samoobslugowa", (char*)NULL);
+
+        perror("Blad exec() dla managera kas samoobslugowych");
+        ObslugaSIGTERM(0);
+        exit(1);
+    }
+    else {
+        //Przekazanie informacji o poprawnym uruchomieniu procesu managera kas samoobslugowych
+        ZapiszLogF(LOG_INFO, "Uruchomiono proces managera kas samoobslugowych [PID: %d]", g_pid_manager_samoobslugowych);
     }
 
     //URUCHOMIENIE PROCESU PRACOWNIKA OBSLUGI
@@ -300,7 +332,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     else if (g_pid_pracownika == 0) {
-        g_is_parent = 0; //Dziecko nie moze sprzatac zasobow
+        g_czy_rodzic = 0; //Dziecko nie moze sprzatac zasobow
         
         execl("./pracownik", "pracownik", (char*)NULL);
         
@@ -310,30 +342,7 @@ int main(int argc, char* argv[]) {
     }
     else {
         //Przekazanie informacji o poprawnym uruchomieniu procesu pracownika obslugi
-        char buf[256];
-        sprintf(buf, "Uruchomiono proces pracownika obslugi [PID: %d]", g_pid_pracownika);
-        ZapiszLog(LOG_INFO, buf);
-    }
-
-    //URUCHOMIENIE GENERATORA KAS SAMOOBSLUGOWYCH
-    pid_t g_pid_generator_kas_samoobslugowych = fork();
-    if (g_pid_generator_kas_samoobslugowych == -1) {
-        perror("Blad fork() dla generatora kas samoobslugowych");
-        ObslugaSIGTERM(0);
-        PosprzatajZasobyIPC();
-        return 1;
-    }
-    else if (g_pid_generator_kas_samoobslugowych == 0) {
-        g_is_parent = 0;
-
-        execl("./kasa_samoobslugowa", "kasa_samoobslugowa", (char*)NULL);
-
-        perror("Blad exec() dla generatora kas samoobslugowych");
-        ObslugaSIGTERM(0);
-        exit(1);
-    }
-    else {
-        ZapiszLogF(LOG_INFO, "Uruchomiono proces generatora kas samoobslugowych [PID: %d]", g_pid_generator_kas_samoobslugowych);
+        ZapiszLogF(LOG_INFO, "Uruchomiono proces pracownika obslugi [PID: %d]", g_pid_pracownika);
     }
 
     //URUCHOMIENIE PROCESU GENERATORA KLIENCIOW
@@ -345,11 +354,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     else if (g_pid_generatora_klientow == 0) {
-        g_is_parent = 0; //Dziecko nie moze sprzatac zasobow
+        g_czy_rodzic = 0; //Dziecko nie moze sprzatac zasobow
 
         char bufor[16];
         sprintf(bufor, "%d", pula_klientow); //Konwersja int na string
-        execl("./klient", "klient", bufor, (char*)NULL);
+        execl("./klient", "klient", bufor, "-quiet", (char*)NULL);
         
         perror("Blad exec() dla klienta");
         ObslugaSIGTERM(0);

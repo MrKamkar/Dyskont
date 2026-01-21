@@ -167,7 +167,7 @@ void ZapiszLog(TypLogu typ_logu, const char* format) {
     msg.tresc[127] = '\0';
 
     //Wyslanie do kolejki (nieblokujace by logi nie zatrzymywaly symulacji)
-    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), IPC_NOWAIT);
+    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0);
 }
 
 void ZapiszLogF(TypLogu typ_logu, const char* format, ...) {
@@ -183,5 +183,5 @@ void ZapiszLogF(TypLogu typ_logu, const char* format, ...) {
     va_end(args);
 
     //Wyslanie do kolejki (nieblokujace by logi nie zatrzymywaly symulacji)
-    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), IPC_NOWAIT);
+    msgsnd(id_kolejki, &msg, sizeof(msg) - sizeof(long), 0);
 }

@@ -9,15 +9,17 @@ LDFLAGS = -lpthread -lrt
 MAIN_TARGET = dyskont.out
 KLIENT_TARGET = klient
 KASJER_TARGET = kasjer
-KASA_SAMO_TARGET = kasa_samo
+KASA_SAMO_TARGET = kasa_samoobslugowa
 PRACOWNIK_TARGET = pracownik
 KIEROWNIK_TARGET = kierownik
 
 SRC_DIR = Dyskont
 
-# Pliki wspólne dla programów
-COMMON_SRCS = $(SRC_DIR)/pamiec_wspoldzielona.c $(SRC_DIR)/logi.c $(SRC_DIR)/semafory.c $(SRC_DIR)/wspolne.c $(SRC_DIR)/kasjer.c $(SRC_DIR)/kasa_samoobslugowa.c $(SRC_DIR)/pracownik_obslugi.c $(SRC_DIR)/kolejki.c
-COMMON_OBJS = $(SRC_DIR)/pamiec_wspoldzielona.o $(SRC_DIR)/logi.o $(SRC_DIR)/semafory.o $(SRC_DIR)/wspolne.o $(SRC_DIR)/kasjer.o $(SRC_DIR)/kasa_samoobslugowa.o $(SRC_DIR)/pracownik_obslugi.o $(SRC_DIR)/kolejki.o
+# Pliki wspólne dla programów (bez standalone-specific)
+COMMON_OBJS_BASE = $(SRC_DIR)/pamiec_wspoldzielona.o $(SRC_DIR)/logi.o $(SRC_DIR)/semafory.o $(SRC_DIR)/wspolne.o $(SRC_DIR)/kolejki.o
+
+# Dla głównego programu - wszystkie moduły
+COMMON_OBJS = $(COMMON_OBJS_BASE) $(SRC_DIR)/kasjer.o $(SRC_DIR)/kasa_samoobslugowa.o $(SRC_DIR)/pracownik_obslugi.o
 
 # Pliki dla głównego programu (manager)
 MAIN_SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/klient.c
@@ -33,21 +35,21 @@ all: $(MAIN_TARGET) $(KLIENT_TARGET) $(KASJER_TARGET) $(KASA_SAMO_TARGET) $(PRAC
 $(MAIN_TARGET): $(MAIN_OBJS) $(COMMON_OBJS)
 	$(CC) $(MAIN_OBJS) $(COMMON_OBJS) -o $(MAIN_TARGET) $(LDFLAGS)
 
-# Program klienta (standalone)
-$(KLIENT_TARGET): $(SRC_DIR)/klient_standalone.o $(COMMON_OBJS)
-	$(CC) $(SRC_DIR)/klient_standalone.o $(COMMON_OBJS) -o $(KLIENT_TARGET) $(LDFLAGS)
+# Program klienta (standalone) - bez własnego .o w COMMON
+$(KLIENT_TARGET): $(SRC_DIR)/klient_standalone.o $(COMMON_OBJS_BASE) $(SRC_DIR)/kasjer.o $(SRC_DIR)/kasa_samoobslugowa.o $(SRC_DIR)/pracownik_obslugi.o
+	$(CC) $(SRC_DIR)/klient_standalone.o $(COMMON_OBJS_BASE) $(SRC_DIR)/kasjer.o $(SRC_DIR)/kasa_samoobslugowa.o $(SRC_DIR)/pracownik_obslugi.o -o $(KLIENT_TARGET) $(LDFLAGS)
 
-# Program kasjera (standalone)
-$(KASJER_TARGET): $(SRC_DIR)/kasjer_standalone.o $(COMMON_OBJS)
-	$(CC) $(SRC_DIR)/kasjer_standalone.o $(COMMON_OBJS) -o $(KASJER_TARGET) $(LDFLAGS)
+# Program kasjera (standalone) - bez kasjer.o
+$(KASJER_TARGET): $(SRC_DIR)/kasjer_standalone.o $(COMMON_OBJS_BASE) $(SRC_DIR)/kasa_samoobslugowa.o $(SRC_DIR)/pracownik_obslugi.o
+	$(CC) $(SRC_DIR)/kasjer_standalone.o $(COMMON_OBJS_BASE) $(SRC_DIR)/kasa_samoobslugowa.o $(SRC_DIR)/pracownik_obslugi.o -o $(KASJER_TARGET) $(LDFLAGS)
 
-# Program kasy samoobslugowej (standalone)
-$(KASA_SAMO_TARGET): $(SRC_DIR)/kasa_samo_standalone.o $(COMMON_OBJS)
-	$(CC) $(SRC_DIR)/kasa_samo_standalone.o $(COMMON_OBJS) -o $(KASA_SAMO_TARGET) $(LDFLAGS)
+# Program kasy samoobslugowej (standalone) - bez kasa_samoobslugowa.o
+$(KASA_SAMO_TARGET): $(SRC_DIR)/kasa_samoobslugowa_standalone.o $(COMMON_OBJS_BASE) $(SRC_DIR)/kasjer.o $(SRC_DIR)/pracownik_obslugi.o
+	$(CC) $(SRC_DIR)/kasa_samoobslugowa_standalone.o $(COMMON_OBJS_BASE) $(SRC_DIR)/kasjer.o $(SRC_DIR)/pracownik_obslugi.o -o $(KASA_SAMO_TARGET) $(LDFLAGS)
 
-# Program pracownika obslugi (standalone)
-$(PRACOWNIK_TARGET): $(SRC_DIR)/pracownik_standalone.o $(COMMON_OBJS)
-	$(CC) $(SRC_DIR)/pracownik_standalone.o $(COMMON_OBJS) -o $(PRACOWNIK_TARGET) $(LDFLAGS)
+# Program pracownika obslugi (standalone) - bez pracownik_obslugi.o
+$(PRACOWNIK_TARGET): $(SRC_DIR)/pracownik_standalone.o $(COMMON_OBJS_BASE) $(SRC_DIR)/kasjer.o $(SRC_DIR)/kasa_samoobslugowa.o
+	$(CC) $(SRC_DIR)/pracownik_standalone.o $(COMMON_OBJS_BASE) $(SRC_DIR)/kasjer.o $(SRC_DIR)/kasa_samoobslugowa.o -o $(PRACOWNIK_TARGET) $(LDFLAGS)
 
 # Kompilacja klient.c jako biblioteka dla main (bez KLIENT_STANDALONE)
 $(SRC_DIR)/klient_lib.o: $(SRC_DIR)/klient.c
@@ -62,16 +64,16 @@ $(SRC_DIR)/kasjer_standalone.o: $(SRC_DIR)/kasjer.c
 	$(CC) $(CFLAGS) -DKASJER_STANDALONE -c $(SRC_DIR)/kasjer.c -o $(SRC_DIR)/kasjer_standalone.o
 
 # Kompilacja kasa_samoobslugowa.c jako standalone (z KASA_SAMO_STANDALONE)
-$(SRC_DIR)/kasa_samo_standalone.o: $(SRC_DIR)/kasa_samoobslugowa.c
-	$(CC) $(CFLAGS) -DKASA_SAMO_STANDALONE -c $(SRC_DIR)/kasa_samoobslugowa.c -o $(SRC_DIR)/kasa_samo_standalone.o
+$(SRC_DIR)/kasa_samoobslugowa_standalone.o: $(SRC_DIR)/kasa_samoobslugowa.c
+	$(CC) $(CFLAGS) -DKASA_SAMO_STANDALONE -c $(SRC_DIR)/kasa_samoobslugowa.c -o $(SRC_DIR)/kasa_samoobslugowa_standalone.o
 
 # Kompilacja pracownik_obslugi.c jako standalone (z PRACOWNIK_STANDALONE)
 $(SRC_DIR)/pracownik_standalone.o: $(SRC_DIR)/pracownik_obslugi.c
 	$(CC) $(CFLAGS) -DPRACOWNIK_STANDALONE -c $(SRC_DIR)/pracownik_obslugi.c -o $(SRC_DIR)/pracownik_standalone.o
 
-# Program kierownika (standalone)
-$(KIEROWNIK_TARGET): $(SRC_DIR)/kierownik_standalone.o $(COMMON_OBJS)
-	$(CC) $(SRC_DIR)/kierownik_standalone.o $(COMMON_OBJS) -o $(KIEROWNIK_TARGET) $(LDFLAGS)
+# Program kierownika (standalone) - nie ma konfliktu, kierownik nie jest w COMMON
+$(KIEROWNIK_TARGET): $(SRC_DIR)/kierownik_standalone.o $(COMMON_OBJS_BASE) $(SRC_DIR)/kasjer.o $(SRC_DIR)/kasa_samoobslugowa.o $(SRC_DIR)/pracownik_obslugi.o
+	$(CC) $(SRC_DIR)/kierownik_standalone.o $(COMMON_OBJS_BASE) $(SRC_DIR)/kasjer.o $(SRC_DIR)/kasa_samoobslugowa.o $(SRC_DIR)/pracownik_obslugi.o -o $(KIEROWNIK_TARGET) $(LDFLAGS)
 
 # Kompilacja kierownik.c jako standalone (z KIEROWNIK_STANDALONE)
 $(SRC_DIR)/kierownik_standalone.o: $(SRC_DIR)/kierownik.c
