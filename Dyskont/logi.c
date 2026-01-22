@@ -1,6 +1,6 @@
 #include "logi.h"
 #include "pamiec_wspoldzielona.h"
-#include "wspolne.h"
+#include "pamiec_wspoldzielona.h"
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>

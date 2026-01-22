@@ -1,4 +1,5 @@
-#include "wspolne.h"
+#include "pamiec_wspoldzielona.h"
+#include <sys/msg.h>
 
 //Zwraca nazwe kategorii produktu
 const char* NazwaKategorii(KategoriaProduktu kat) {
@@ -23,11 +24,11 @@ const char* NazwaKategorii(KategoriaProduktu kat) {
 
 
 //Funkcja do pobierania ID segmentu pamieci wspoldzielonej
-static int PobierzIdSegmentu(int flagi) {
+static int PobierzIdSegmentu(size_t rozmiar, int flagi) {
     key_t klucz = GenerujKluczIPC(ID_IPC_PAMIEC);
     if (klucz == -1) return -1;
     
-    int shm_id = shmget(klucz, sizeof(StanSklepu), flagi);
+    int shm_id = shmget(klucz, rozmiar, flagi);
     if (shm_id == -1) if (errno != ENOENT) perror("Blad shmget");
     return shm_id;
 }
@@ -43,20 +44,24 @@ static StanSklepu* DolaczDoSegmentu(int shm_id) {
 }
 
 //Inicjalizacja pamieci wspoldzielonej
-StanSklepu* InicjalizujPamiecWspoldzielona() {
-    int shm_id = PobierzIdSegmentu(IPC_CREAT | 0600);
+StanSklepu* InicjalizujPamiecWspoldzielona(unsigned int max_klientow) {
+    size_t rozmiar = ROZMIAR_PAMIECI_WSPOLDZIELONEJ(max_klientow);
+    int shm_id = PobierzIdSegmentu(rozmiar, IPC_CREAT | 0600);
     if (shm_id == -1) exit(1);
 
     StanSklepu* stan = DolaczDoSegmentu(shm_id);
     if (!stan) exit(1);
 
+    //Ustawienie max_klientow PRZED czyszczeniem
+    stan->max_klientow_rownoczesnie = max_klientow;
     WyczyscStanSklepu(stan);
     return stan;
 }
 
 //Dolaczenie do istniejacej pamieci wspoldzielonej
 StanSklepu* DolaczPamiecWspoldzielona() {
-    int shm_id = PobierzIdSegmentu(0600);
+    //Najpierw próbujemy z minimalnym rozmiarem by odczytac max_klientow
+    int shm_id = PobierzIdSegmentu(sizeof(StanSklepu), 0600);
     if (shm_id == -1) exit(1);
 
     StanSklepu* stan = DolaczDoSegmentu(shm_id);
@@ -74,7 +79,7 @@ void OdlaczPamiecWspoldzielona(StanSklepu* stan) {
 
 //Usuniecie pamieci wspoldzielonej
 void UsunPamiecWspoldzielona() {
-    int shm_id = PobierzIdSegmentu(0600);
+    int shm_id = PobierzIdSegmentu(0, 0600);
     if (shm_id == -1) return;
 
     if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
@@ -119,8 +124,14 @@ static const Produkt DANE_PRODUKTOW[] = {
 void WyczyscStanSklepu(StanSklepu* stan) {
     if (!stan) return;
 
+    //Zachowaj max_klientow - bedzie potrzebne pozniej
+    unsigned int max_klientow = stan->max_klientow_rownoczesnie;
+
     //Wyzerowanie calej struktury
     memset(stan, 0, sizeof(StanSklepu));
+    
+    //Przywroc max_klientow
+    stan->max_klientow_rownoczesnie = max_klientow;
 
     //Inicjalizacja kas samoobslugowych
     for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
@@ -149,6 +160,84 @@ void WyczyscStanSklepu(StanSklepu* stan) {
     //Zapisanie czasu startu
     stan->czas_startu = time(NULL);
     
-    //Ustawienie domyslnej wartosci max klientow rownoczesnie
-    stan->max_klientow_rownoczesnie = MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE;
+    //Inicjalizacja tablicy pomijanych klientow (max_klientow_rownoczesnie juz ustawione)
+    //0 = wolne miejsce, negatywne = samoobslugowa, pozytywne = migracja kasa1->kasa2
+    for (unsigned int i = 0; i < stan->max_klientow_rownoczesnie; i++) {
+        stan->pomijani_klienci[i] = 0;
+    }
+}
+
+//Implementacja funkcji generujacej klucz
+key_t GenerujKluczIPC(char id_projektu) {
+    key_t klucz = ftok(IPC_SCIEZKA, id_projektu);
+    if (klucz == -1) {
+        char buf[64];
+        sprintf(buf, "Blad generowania klucza IPC (id: %c)", id_projektu);
+        perror(buf);
+    }
+    return klucz;
+}
+
+
+//Inicjalizacja procesu pochodnego
+int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_procesu) {
+    
+    //Dolaczenie do pamieci wspoldzielonej
+    *stan = DolaczPamiecWspoldzielona();
+    if (!*stan) {
+        fprintf(stderr, "%s: Nie mozna dolaczyc do pamieci wspoldzielonej\n", nazwa_procesu);
+        return -1;
+    }
+    
+    //Dolaczenie do semaforow
+    *sem_id = DolaczSemafory();
+    if (*sem_id == -1) {
+        fprintf(stderr, "%s: Nie mozna dolaczyc do semaforow\n", nazwa_procesu);
+        OdlaczPamiecWspoldzielona(*stan);
+        *stan = NULL;
+        return -1;
+    }
+    
+    //Inicjalizacja systemu logowania
+    InicjalizujSystemLogowania();
+    
+    return 0;
+}
+
+//Dodaje klienta do tablicy pomijanych (wycofanie z kolejki samoobslugowej)
+//Uzywamy negatywnego id_klienta (-id) zeby odroznic od migracji
+int DodajPomijanego(StanSklepu* stan, int sem_id, int id_klienta) {
+    if (!stan) return -1;
+    
+    int zakodowany_id = -id_klienta; //Negatywne ID dla samoobslugowej
+    
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    for (unsigned int i = 0; i < stan->max_klientow_rownoczesnie; i++) {
+        if (stan->pomijani_klienci[i] == 0) {
+            stan->pomijani_klienci[i] = zakodowany_id;
+            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+            return 0; //Sukces
+        }
+    }
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    return -1; //Brak miejsca
+}
+
+//Sprawdza czy klient jest pominiety (samoobslugowa) i usuwa go z tablicy
+//Szuka NEGATYWNEGO id_klienta
+int CzyPominiety(StanSklepu* stan, int sem_id, int id_klienta) {
+    if (!stan) return 0;
+    
+    int zakodowany_id = -id_klienta; //Szukamy negatywnego ID
+    
+    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    for (unsigned int i = 0; i < stan->max_klientow_rownoczesnie; i++) {
+        if (stan->pomijani_klienci[i] == zakodowany_id) {
+            stan->pomijani_klienci[i] = 0; //Usuwa z tablicy
+            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+            return 1; //Znaleziono i usunieto
+        }
+    }
+    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    return 0; //Nie znaleziono
 }

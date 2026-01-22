@@ -19,7 +19,14 @@
 #define SEM_WEJSCIE_DO_SKLEPU 4 //Ilosc wolnych miejsc w sklepie
 #define SEM_NOWY_KLIENT 5 //Sygnal ze nowy klient wszedl (dla watku kas samoobslugowych)
 
-#define SEM_LICZBA 6 //Calkowita liczba semaforow
+//Semafory kolejek komunikatow
+#define SEM_KOLEJKA_KASA_1 6
+#define SEM_KOLEJKA_KASA_2 7
+#define SEM_KOLEJKA_WSPOLNA 8
+#define SEM_KOLEJKA_SAMO 9
+#define SEM_KOLEJKA_PRACOWNIK 10
+
+#define SEM_LICZBA 11 //Calkowita liczba semaforow
 
 
 //Makra mapujace ID kasy na odpowiedni semafor

@@ -1,6 +1,6 @@
 #include "semafory.h"
 #include "pamiec_wspoldzielona.h"
-#include "wspolne.h"
+#include "pamiec_wspoldzielona.h"
 
 //Operacja na semaforze
 static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
@@ -44,6 +44,13 @@ int InicjalizujSemafory(int max_klientow) {
     
     //Semafor nowego klienta
     wartosci[SEM_NOWY_KLIENT] = 0;
+    
+    //Semafory kolejek komunikatow - inicjalnie 0 (blokada az do zwolnienia miejsca)
+    wartosci[SEM_KOLEJKA_KASA_1] = 0;
+    wartosci[SEM_KOLEJKA_KASA_2] = 0;
+    wartosci[SEM_KOLEJKA_WSPOLNA] = 0;
+    wartosci[SEM_KOLEJKA_SAMO] = 0;
+    wartosci[SEM_KOLEJKA_PRACOWNIK] = 0;
     
     //Semafor wpuszczajacy klientow (Max klientow w sklepie)
     if (max_klientow > 0) wartosci[SEM_WEJSCIE_DO_SKLEPU] = (unsigned short)max_klientow;

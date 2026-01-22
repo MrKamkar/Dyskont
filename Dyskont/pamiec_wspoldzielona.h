@@ -7,7 +7,59 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "semafory.h"
+#include "logi.h"
 #include <time.h>
+
+//Identyfikatory projektow dla ftok()
+#define ID_IPC_LOGI 'A'
+#define ID_IPC_SEMAFORY 'M'
+#define ID_IPC_PAMIEC 'S'
+
+//Typy komunikatow
+#define MSG_TYPE_KASA_1 1
+#define MSG_TYPE_KASA_2 2
+#define MSG_TYPE_KASA_WSPOLNA 3
+#define MSG_TYPE_SAMOOBSLUGA 4
+#define MSG_TYPE_PRACOWNIK 5
+
+//Kanal odpowiedzi
+#define MSG_RES_SAMOOBSLUGA_BASE 10000
+#define MSG_RES_STACJONARNA_BASE 20000
+#define MSG_RES_PRACOWNIK_BASE   30000
+
+//Kody operacji dla pracownika
+#define OP_WERYFIKACJA_WIEKU 1
+#define OP_ODBLOKOWANIE_KASY 2
+
+//Struktura komunikatu dla kasy stacjonarnej
+typedef struct {
+    long mtype;       //Typ komunikatu
+    int id_klienta;   //ID klienta
+    unsigned int liczba_produktow;
+    double suma_koszyka;
+    int ma_alkohol;
+    unsigned int wiek;
+} MsgKasaStacj;
+
+//Struktura komunikatu dla kasy samoobslugowej
+typedef struct {
+    long mtype;
+    int id_klienta;
+    unsigned int liczba_produktow;
+    double suma_koszyka;
+    int ma_alkohol;
+    unsigned int wiek;
+    time_t timestamp; //Znacznik czasu wyslania
+} MsgKasaSamo;
+
+//Struktura komunikatu dla pracownika obslugi
+typedef struct {
+    long mtype;
+    int id_kasy;      //ID kasy zglaszajacej
+    int operacja;     //Typ zlecenia/wynik
+    unsigned int wiek;
+} MsgPracownik;
 
 //Kategorie produktow
 typedef enum {
@@ -39,8 +91,7 @@ typedef struct {
 } Produkt;
 
 //Maksymalne rozmiary kolejek
-#define MAX_KOLEJKA_SAMOOBSLUGOWA 30
-#define MAX_KOLEJKA_STACJONARNA 10
+
 #define MAX_PRODUKTOW 50
 
 //Liczba kas
@@ -55,7 +106,7 @@ typedef struct {
 #define KLIENCI_NA_KASE 5  //Parametr K z README.md
 #define MAX_KLIENTOW_ROWNOCZESNIE_DOMYSLNIE 100
 #define PRZERWA_MIEDZY_KLIENTAMI_MS 500
-#define CZAS_OCZEKIWANIA_T 5  //Czas oczekiwania, po ktorym klient moze przejsc do kasy stacjonarnej
+#define CZAS_OCZEKIWANIA_T 20  //Czas oczekiwania, po ktorym klient moze przejsc do kasy stacjonarnej
 
 //Makro do symulacyjnych usleep, ktore mozna wylaczyc w trybie testu
 #define SYMULACJA_USLEEP(stan, us) if ((stan)->tryb_testu == 0) usleep(us);
@@ -91,9 +142,6 @@ typedef struct {
     Kasa kasy_samoobslugowe[LICZBA_KAS_SAMOOBSLUGOWYCH];
     Kasa kasy_stacjonarne[LICZBA_KAS_STACJONARNYCH];
 
-
-    //unsigned int liczba_w_kolejce_samoobslugowej; //Liczba klientow w kolejce do kasy samoobslugowej
-
     
     //Liczniki
     unsigned int liczba_klientow_w_sklepie;
@@ -104,11 +152,12 @@ typedef struct {
     unsigned int liczba_produktow; //Rozmiar tablicy magazyn
     
     //Flagi kontrolne
-    PolecenieKierownika polecenie_kierownika; //Polecenie od kierownika
+    PolecenieKierownika polecenie_kierownika; 
     int id_kasy_do_zamkniecia; //Ktora kasa ma byc zamknieta (0 lub 1)
     
     //PID glownego procesu do wysylania sygnalow
     pid_t pid_glowny;
+    pid_t pid_kierownika; //PID procesu kierownika (panelu sterowania)
     
     //Czas symulacji
     time_t czas_startu;
@@ -118,15 +167,28 @@ typedef struct {
     
     //Maksymalna liczba klientow rownoczesnie w sklepie
     unsigned int max_klientow_rownoczesnie;
+    
+    //Tablica pomijanych klientow
+    int pomijani_klienci[];
 } StanSklepu;
 
+//Oblicza rozmiar segmentu pamieci wspoldzielonej dla danej liczby klientow
+#define ROZMIAR_PAMIECI_WSPOLDZIELONEJ(max_klientow) \
+    (sizeof(StanSklepu) + sizeof(int) * (max_klientow))
+
 //Funkcje zarzadzajace pamiecia wspoldzielona
-StanSklepu* InicjalizujPamiecWspoldzielona();
+StanSklepu* InicjalizujPamiecWspoldzielona(unsigned int max_klientow);
 StanSklepu* DolaczPamiecWspoldzielona();
 void OdlaczPamiecWspoldzielona(StanSklepu* stan);
 void UsunPamiecWspoldzielona();
 
 //Funkcje pomocnicze
 void WyczyscStanSklepu(StanSklepu* stan);
+key_t GenerujKluczIPC(char id_projektu);
+int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_procesu);
+
+//Zarzadzanie tablica pomijanych klientow (wycofanie z kolejki samoobslugowej)
+int DodajPomijanego(StanSklepu* stan, int sem_id, int id_klienta);
+int CzyPominiety(StanSklepu* stan, int sem_id, int id_klienta);
 
 #endif

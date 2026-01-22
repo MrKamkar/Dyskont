@@ -140,7 +140,6 @@
     <ClCompile Include="pamiec_wspoldzielona.c" />
     <ClCompile Include="pracownik_obslugi.c" />
     <ClCompile Include="semafory.c" />
-    <ClCompile Include="wspolne.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="kasa_samoobslugowa.h" />
@@ -151,7 +150,6 @@
     <ClInclude Include="pamiec_wspoldzielona.h" />
     <ClInclude Include="pracownik_obslugi.h" />
     <ClInclude Include="semafory.h" />
-    <ClInclude Include="wspolne.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -9,7 +9,7 @@
 #include "logi.h"
 #include "pamiec_wspoldzielona.h"
 #include "semafory.h"
-#include "wspolne.h"
+#include "pamiec_wspoldzielona.h"
 #include "kolejki.h"
 #include "kasjer.h"
 
@@ -17,13 +17,14 @@ static StanSklepu* g_stan_sklepu = NULL; //Wskaznik do pamieci wspoldzielonej
 static int g_sem_id = -1; //ID tablicy semaforow
 static int g_msg_id_1 = -1;
 static int g_msg_id_2 = -1;
+static int g_msg_id_wspolna = -1;
 static int g_msg_id_samo = -1;
 static int g_msg_id_prac = -1;
 
 static int g_czy_rodzic = 1; //Flaga mowiaca czy jestesmy w glownym procesie
 
 //PIDy procesow potomnych
-static pid_t g_pid_kasjerow[LICZBA_KAS_STACJONARNYCH];
+static pid_t g_pid_manager_kasjerow;
 static pid_t g_pid_manager_samoobslugowych;
 static pid_t g_pid_pracownika;
 static pid_t g_pid_generatora_klientow;
@@ -45,6 +46,7 @@ static void PosprzatajZasobyIPC() {
     //Usuwanie kolejek komunikatow
     UsunKolejke(g_msg_id_1);
     UsunKolejke(g_msg_id_2);
+    UsunKolejke(g_msg_id_wspolna);
     UsunKolejke(g_msg_id_samo);
     UsunKolejke(g_msg_id_prac);
     
@@ -73,15 +75,13 @@ void* WatekSprzatajacy(void* arg) {
         else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Generator klientow [PID: %d] zabity sygnalem %d", wynik, WTERMSIG(status));
     } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Proces generatora klientow zostal juz zakonczony wczesniej.");
 
-    //Czyszczenie kasjerow
-    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
-        kill(g_pid_kasjerow[i], SIGTERM);
-        wynik = waitpid(g_pid_kasjerow[i], &status, 0);
-        if (wynik > 0) {
-            if (WIFEXITED(status)) ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d, PID: %d] zakonczony (status: %d)", i + 1, wynik, WEXITSTATUS(status));
-            else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d, PID: %d] zabity sygnalem %d", i + 1, wynik, WTERMSIG(status));
-        } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d] zostal juz zakonczony wczesniej.", i + 1);
-    }
+    //Czyszczenie managera kas stacjonarnych
+    kill(g_pid_manager_kasjerow, SIGTERM);
+    wynik = waitpid(g_pid_manager_kasjerow, &status, 0);
+    if (wynik > 0) {
+        if (WIFEXITED(status)) ZapiszLogF(LOG_INFO, "Manager kas stacjonarnych [PID: %d] zakonczony (status: %d)", wynik, WEXITSTATUS(status));
+        else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Manager kas stacjonarnych [PID: %d] zabity sygnalem %d", wynik, WTERMSIG(status));
+    } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Manager kas stacjonarnych zostal juz zakonczony wczesniej.");
 
     //Czyszczenie kas samoobslugowych
     kill(g_pid_manager_samoobslugowych, SIGTERM);
@@ -99,57 +99,38 @@ void* WatekSprzatajacy(void* arg) {
         else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Pracownik obslugi [PID: %d] zabity sygnalem %d", wynik, WTERMSIG(status));
     } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Pracownik obslugi zostal juz zakonczony wczesniej.");
     
+    //Czyszczenie kierownika (jesli uruchomiony)
+    if (g_stan_sklepu->pid_kierownika > 0) {
+        kill(g_stan_sklepu->pid_kierownika, SIGTERM);
+        ZapiszLogF(LOG_INFO, "Wyslano SIGTERM do kierownika [PID: %d]", g_stan_sklepu->pid_kierownika);
+    }
+
     return NULL;
 }
 
-//Sygnal do otwarcia kasy stacjonarnej 2
+//Sygnal do otwarcia kasy stacjonarnej 2 - przekazanie do procesu kasjer
 void ObslugaSIGUSR1(int sig) {
     (void)sig;
 
     if (!g_stan_sklepu) return;
     
-    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    if (g_stan_sklepu->kasy_stacjonarne[1].stan == KASA_ZAMKNIETA) {
-
-        g_stan_sklepu->kasy_stacjonarne[1].stan = KASA_WOLNA;
-        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        
-        //Sygnal dla kasjera ze kasa jest juz otwarta
-        ZwolnijSemafor(g_sem_id, SEM_OTWORZ_KASA_STACJONARNA_2);
-        
-        ZapiszLog(LOG_INFO, "Kierownik: Sygnal SIGUSR1 => otwarto kase stacjonarna 2.");
-        
-        //Migracja klientow z kasy 1 do kasy 2
-        //PrzeniesKlientowDoKasy2(g_stan_sklepu, g_sem_id, g_msg_id);
-    } else {
-        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        ZapiszLog(LOG_OSTRZEZENIE, "Kierownik: Kasa 2 jest juz otwarta.");
+    //Przekazujemy sygnal do procesu managera kas stacjonarnych
+    if (g_pid_manager_kasjerow > 0) {
+        kill(g_pid_manager_kasjerow, SIGUSR1);
+        ZapiszLog(LOG_INFO, "Main: Przekazano SIGUSR1 do managera kas stacjonarnych (otwieranie kasy 2).");
     }
 }
 
-//Zamykanie kasy stacjonarnej
+//Zamykanie kasy stacjonarnej - przekazanie do procesu kasjer
 void ObslugaSIGUSR2(int sig) {
     (void)sig;
 
     if (!g_stan_sklepu) return;
     
-    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-
-    //Pobranie kasy do zamkniecia
-    int id_kasy_do_zamkniecia = g_stan_sklepu->id_kasy_do_zamkniecia;
-    Kasa kasa_do_zamkniecia = g_stan_sklepu->kasy_stacjonarne[id_kasy_do_zamkniecia];
-
-    //Zamykanie kasy stacjonarnej
-    if (kasa_do_zamkniecia.stan != KASA_ZAMKNIETA) {
-
-        kasa_do_zamkniecia.stan = KASA_ZAMYKANA; //Nowi klienci nie moga dolaczyc
-        kill(g_pid_kasjerow[id_kasy_do_zamkniecia], SIGUSR1);
-        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-
-        ZapiszLogF(LOG_INFO, "Kierownik: Sygnal SIGUSR2 => kasa %d zamyka sie.", id_kasy_do_zamkniecia + 1);
-    } else {
-        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        ZapiszLogF(LOG_OSTRZEZENIE, "Kierownik: Kasa %d jest juz zamknieta.", id_kasy_do_zamkniecia + 1);
+    //Przekazujemy sygnal do procesu managera kas stacjonarnych
+    if (g_pid_manager_kasjerow > 0) {
+        kill(g_pid_manager_kasjerow, SIGUSR2);
+        ZapiszLog(LOG_INFO, "Main: Przekazano SIGUSR2 do managera kas stacjonarnych (zamykanie kasy).");
     }
 }
 
@@ -164,6 +145,8 @@ void ObslugaSIGTERM(int sig) {
         perror("Blad tworzenia watku sprzatajacego");
         WatekSprzatajacy(NULL); //Uruchomienie funkcji asynchronicznie
     } else pthread_join(czyszczenie, NULL);
+
+    PosprzatajZasobyIPC();
 }
 
 
@@ -192,6 +175,12 @@ int main(int argc, char* argv[]) {
     if (max_klientow <= 0) {
         fprintf(stderr, "Blad: Ilosc klientow w sklepie rownoczesnie nie moze byc mniejsza niz 0\n");
         return 1;
+    }
+    
+    //Ograniczenie ze wzgledu na limity semaforow
+    if (max_klientow > 32000) {
+        printf("Ostrzezenie: Liczba klientow w sklepie (%d) przekracza limit semafora. Ustawiam na 32000.\n", max_klientow);
+        max_klientow = 32000;
     }
 
     //Opcjonalny tryb testu
@@ -227,12 +216,11 @@ int main(int argc, char* argv[]) {
 
     //Inicjalizacja pamieci wspoldzielonej
     ZapiszLog(LOG_INFO, "Inicjalizacja pamieci wspoldzielonej..");
-    g_stan_sklepu = InicjalizujPamiecWspoldzielona();
+    g_stan_sklepu = InicjalizujPamiecWspoldzielona(max_klientow);
 
-    //Zapisz PID glownego procesu, tryb testu i max klientow do pamieci wspoldzielonej
+    //Zapisz PID glownego procesu i tryb testu do pamieci wspoldzielonej
     g_stan_sklepu->pid_glowny = getpid();
     g_stan_sklepu->tryb_testu = tryb_testu;
-    g_stan_sklepu->max_klientow_rownoczesnie = max_klientow;
 
     ZapiszLog(LOG_INFO, "Pamiec wspoldzielona zainicjalizowana pomyslnie.");
 
@@ -244,6 +232,7 @@ int main(int argc, char* argv[]) {
         perror("Blad inicjalizacji semaforow");
         ZapiszLog(LOG_BLAD, "Nie udalo sie zainicjalizowac semaforow!");
         ObslugaSIGTERM(0);
+        PosprzatajZasobyIPC();
         return 1;
     }
     ZapiszLog(LOG_INFO, "Semafory zainicjalizowane pomyslnie.");
@@ -251,16 +240,11 @@ int main(int argc, char* argv[]) {
     //Inicjalizacja kolejek komunikatow
     g_msg_id_1 = StworzKolejke(ID_IPC_KASA_1);
     g_msg_id_2 = StworzKolejke(ID_IPC_KASA_2);
+    g_msg_id_wspolna = StworzKolejke(ID_IPC_KASA_WSPOLNA);
     g_msg_id_samo = StworzKolejke(ID_IPC_SAMO);
     g_msg_id_prac = StworzKolejke(ID_IPC_PRACOWNIK);
-
-    //Ograniczamy pojemnosc kolejek komunikatow o 1 miejsce, aby uniknac deadloku
-    ZostawMiejsceWKolejce(g_msg_id_1, sizeof(MsgKasaStacj) - sizeof(long));
-    ZostawMiejsceWKolejce(g_msg_id_2, sizeof(MsgKasaStacj) - sizeof(long));
-    ZostawMiejsceWKolejce(g_msg_id_samo, sizeof(MsgKasaSamo) - sizeof(long));
-    ZostawMiejsceWKolejce(g_msg_id_prac, sizeof(MsgPracownik) - sizeof(long));
-
-    if (g_msg_id_1 == -1 || g_msg_id_2 == -1 || g_msg_id_samo == -1 || g_msg_id_prac == -1) {
+    
+    if (g_msg_id_1 == -1 || g_msg_id_2 == -1 || g_msg_id_wspolna == -1 || g_msg_id_samo == -1 || g_msg_id_prac == -1) {
         perror("Blad tworzenia kolejek komunikatow");
         ZapiszLog(LOG_BLAD, "Nie udalo sie stworzyc kolejek komunikatow!");
 
@@ -269,33 +253,27 @@ int main(int argc, char* argv[]) {
     }
     ZapiszLog(LOG_INFO, "Kolejki komunikatow zainicjalizowane.");
 
-    //URUCHOMIENIE PROCESOW KASJEROW
-    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
-        g_pid_kasjerow[i] = fork();
+    //URUCHOMIENIE MANAGERA KAS STACJONARNYCH (Kasa 1 + watek zarzadzajacy)
+    g_pid_manager_kasjerow = fork();
+    
+    if (g_pid_manager_kasjerow == -1) {
+        perror("Blad fork() dla managera kas stacjonarnych");
+        ZapiszLog(LOG_BLAD, "Nie udalo sie uruchomic procesu managera kas stacjonarnych!");
+        ObslugaSIGTERM(0);
+        return 1;
+    }
+    if (g_pid_manager_kasjerow == 0) {
+        g_czy_rodzic = 0; //Dziecko nie moze sprzatac zasobow
+
+        execl("./kasjer", "kasjer", (char*)NULL);
         
-        if (g_pid_kasjerow[i] == -1) {
-            perror("Blad fork() dla kasjera");
-            ZapiszLog(LOG_BLAD, "Nie udalo sie uruchomic procesu kasjera!");
-            ObslugaSIGTERM(0);
-            PosprzatajZasobyIPC();
-            return 1;
-        }
-        if (g_pid_kasjerow[i] == 0) {
-            g_czy_rodzic = 0; //Dziecko nie moze sprzatac zasobow
-
-            char id_str[16];
-            sprintf(id_str, "%d", i); //ID kasjera
-
-            execl("./kasjer", "kasjer", id_str, (char*)NULL);
-            
-            perror("Blad exec() dla kasjera");
-            ObslugaSIGTERM(0);
-            return 1;
-        }
-        else {
-            //Przekazanie informacji o poprawnym uruchomieniu procesu kasjera
-            ZapiszLogF(LOG_INFO, "Uruchomiono proces kasjera [PID: %d, Kasa: %d]", g_pid_kasjerow[i], i + 1);
-        }
+        perror("Blad exec() dla managera kas stacjonarnych");
+        ObslugaSIGTERM(0);
+        return 1;
+    }
+    else {
+        //Przekazanie informacji o poprawnym uruchomieniu procesu managera kas stacjonarnych
+        ZapiszLogF(LOG_INFO, "Uruchomiono proces managera kas stacjonarnych [PID: %d]", g_pid_manager_kasjerow);
     }
 
     //URUCHOMIENIE MANAGERA KAS SAMOOBSLUGOWYCH
@@ -387,9 +365,6 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-
-    //Sprzatanie IPC
-    PosprzatajZasobyIPC();
 
     printf("=== Koniec symulacji ===\n");
     return 0;

@@ -1,5 +1,5 @@
 #include "kierownik.h"
-#include "wspolne.h"
+#include "pamiec_wspoldzielona.h"
 #include "kolejki.h"
 #include <string.h>
 #include <unistd.h>
@@ -27,37 +27,56 @@ void WyswietlMenu() {
 
 //Wyswietla status kolejek (przez msgctl)
 static void PokazStatusKolejek() {
+    int msg_id_wspolna = PobierzIdKolejki(ID_IPC_KASA_WSPOLNA);
     int msg_id_1 = PobierzIdKolejki(ID_IPC_KASA_1);
     int msg_id_2 = PobierzIdKolejki(ID_IPC_KASA_2);
     int msg_id_samo = PobierzIdKolejki(ID_IPC_SAMO);
 
+    //Pobierz stan kas z pamieci wspoldzielonej
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    StanKasy stan_kasy_1 = g_stan_sklepu->kasy_stacjonarne[0].stan;
+    StanKasy stan_kasy_2 = g_stan_sklepu->kasy_stacjonarne[1].stan;
+    int klienci = PobierzLiczbeKlientow(g_sem_id, g_stan_sklepu->max_klientow_rownoczesnie);
+    unsigned int kasy_samo_czynne = g_stan_sklepu->liczba_czynnych_kas_samoobslugowych;
+    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+
     printf("\n--- STATUS KOLEJEK (msgctl) ---\n");
-    printf("  Kasa stacjonarna 1: %d osob\n", PobierzRozmiarKolejki(msg_id_1));
-    printf("  Kasa stacjonarna 2: %d osob\n", PobierzRozmiarKolejki(msg_id_2));
+    
+    //Wspolna kolejka wyswietlana tylko gdy obie kasy zamkniete
+    int obie_zamkniete = (stan_kasy_1 == KASA_ZAMKNIETA) && (stan_kasy_2 == KASA_ZAMKNIETA);
+    if (obie_zamkniete) {
+        printf("  Kolejka do kas stacjonarnych: %d osob\n", PobierzRozmiarKolejki(msg_id_wspolna));
+    } else {
+        printf("  Kasa stacjonarna 1: %d osob\n", PobierzRozmiarKolejki(msg_id_1));
+        printf("  Kasa stacjonarna 2: %d osob\n", PobierzRozmiarKolejki(msg_id_2));
+    }
     printf("  Kasy samoobslugowe: %d osob\n", PobierzRozmiarKolejki(msg_id_samo));
     
-    //Status kas z pamieci wspoldzielonej
-    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    int klienci = PobierzLiczbeKlientow(g_sem_id, g_stan_sklepu->max_klientow_rownoczesnie);
+    //Status kas
     printf("\n--- STATUS KAS ---\n");
     printf("  Klienci w sklepie: %d\n", klienci);
-    printf("  Kasy samoobslugowe czynne: %u/%d\n", 
-           g_stan_sklepu->liczba_czynnych_kas_samoobslugowych, LICZBA_KAS_SAMOOBSLUGOWYCH);
+    printf("  Kasy samoobslugowe czynne: %u/%d\n", kasy_samo_czynne, LICZBA_KAS_SAMOOBSLUGOWYCH);
     
-    for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
-        const char* status;
-        switch (g_stan_sklepu->kasy_stacjonarne[i].stan) {
-            case KASA_ZAMKNIETA: status = "ZAMKNIETA"; break;
-            case KASA_WOLNA: status = "WOLNA"; break;
-            case KASA_ZAJETA: status = "ZAJETA"; break;
-            case KASA_ZAMYKANA: status = "ZAMYKANA"; break;
-            default: status = "?"; break;
-        }
-        printf("  Kasa stacjonarna %d: %s\n", i + 1, status);
-    }
-    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    const char* nazwy_stanow[] = {"ZAMKNIETA", "WOLNA", "ZAJETA", "ZAMYKANA"};
+    printf("  Kasa stacjonarna 1: %s\n", nazwy_stanow[stan_kasy_1]);
+    printf("  Kasa stacjonarna 2: %s\n", nazwy_stanow[stan_kasy_2]);
     
     printf("-------------------------------\n");
+}
+
+//Handler SIGTERM (wyslany przez glowny proces)
+static void ObslugaSIGTERM(int sig) {
+    (void)sig;
+    printf("\n\n[AUTO-EXIT] Wykryto zakonczenie symulacji.\n");
+    if (g_stan_sklepu) {
+        //Wyczysc PID kierownika przed wyjsciem
+        ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        g_stan_sklepu->pid_kierownika = 0;
+        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        
+        OdlaczPamiecWspoldzielona(g_stan_sklepu);
+    }
+    exit(0);
 }
 
 int main() {
@@ -67,14 +86,26 @@ int main() {
         return 1;
     }
     
+    //Rejestracja PID kierownika w pamieci wspoldzielonej
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    g_stan_sklepu->pid_kierownika = getpid();
     pid_t pid_glowny = g_stan_sklepu->pid_glowny;
+    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+
     if (pid_glowny <= 0) {
         fprintf(stderr, "Blad: Nie znaleziono PID glownego procesu.\n");
         OdlaczPamiecWspoldzielona(g_stan_sklepu);
         return 1;
     }
     
-    printf("Panel kierownika uruchomiony.\n");
+    //Obsluga SIGTERM
+    struct sigaction sa;
+    sa.sa_handler = ObslugaSIGTERM;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGTERM, &sa, NULL);
+    
+    printf("Panel kierownika uruchomiony (PID: %d).\n", getpid());
     printf("PID procesu glownego: %d\n", pid_glowny);
     
     int wybor;
@@ -84,6 +115,7 @@ int main() {
         WyswietlMenu();
         
         if (scanf("%d", &wybor) != 1) {
+            if (errno == EINTR) continue; //Przerwane sygnalem
             while (getchar() != '\n');
             printf("Nieprawidlowy wybor.\n");
             continue;
@@ -149,6 +181,11 @@ int main() {
                 printf("Nieprawidlowy wybor.\n");
         }
     }
+    
+    //Wyczysc PID przy normalnym wyjsciu
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    g_stan_sklepu->pid_kierownika = 0;
+    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     OdlaczPamiecWspoldzielona(g_stan_sklepu);
     return 0;

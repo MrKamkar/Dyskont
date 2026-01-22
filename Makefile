@@ -16,7 +16,7 @@ KIEROWNIK_TARGET = kierownik
 SRC_DIR = Dyskont
 
 # Pliki wspólne dla programów (bez standalone-specific)
-COMMON_OBJS_BASE = $(SRC_DIR)/pamiec_wspoldzielona.o $(SRC_DIR)/logi.o $(SRC_DIR)/semafory.o $(SRC_DIR)/wspolne.o $(SRC_DIR)/kolejki.o
+COMMON_OBJS_BASE = $(SRC_DIR)/pamiec_wspoldzielona.o $(SRC_DIR)/logi.o $(SRC_DIR)/semafory.o $(SRC_DIR)/kolejki.o
 
 # Dla głównego programu - wszystkie moduły
 COMMON_OBJS = $(COMMON_OBJS_BASE) $(SRC_DIR)/kasjer.o $(SRC_DIR)/kasa_samoobslugowa.o $(SRC_DIR)/pracownik_obslugi.o

@@ -2,12 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <signal.h>
 #include <sys/msg.h>
 #include <errno.h>
 #include "kolejki.h"
 
 //Wysylanie zadania do pracownika obslugi przez kase samoobslugowa
-int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek) {
+int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek, int sem_id) {
 
     int msg_id = PobierzIdKolejki(ID_IPC_PRACOWNIK);
     if (msg_id == -1) {
@@ -22,15 +23,14 @@ int WyslijZadanieObslugi(int id_kasy, int typ_operacji, int wiek) {
     
     size_t size = sizeof(MsgPracownik) - sizeof(long);
     
-    //Wyslij do kolejki komunikatow
-    if (WyslijKomunikat(msg_id, &msg, size) == -1) {
+    if (WyslijKomunikat(msg_id, &msg, size, sem_id, SEM_KOLEJKA_PRACOWNIK) == -1) {
         if (errno != EINTR) perror("Pracownik helper msgsnd");
         return -1;
     }
     
     //Czekanie na odpowiedz pracownika
     MsgPracownik res;
-    if (OdbierzKomunikat(msg_id, &res, size, MSG_RES_PRACOWNIK_BASE + id_kasy, 0) == -1) {
+    if (OdbierzKomunikat(msg_id, &res, size, MSG_RES_PRACOWNIK_BASE + id_kasy, 0, sem_id, SEM_KOLEJKA_PRACOWNIK) == -1) {
         if (errno != EINTR) perror("Pracownik helper msgrcv");
         return -1;
     }
@@ -83,8 +83,8 @@ int main() {
     MsgPracownik msg_in;
     
     while (1) {
-        //Odbior zlecen od kas samoobslugowych (blokujacy)
-        int odb_msg = OdbierzKomunikat(msg_id, &msg_in, size, 0, 0);
+        //Odbieramy tylko typ MSG_TYPE_PRACOWNIK, by nie odebrac wlasnych odpowiedzi
+        int odb_msg = OdbierzKomunikat(msg_id, &msg_in, size, MSG_TYPE_PRACOWNIK, 0, sem_id, SEM_KOLEJKA_PRACOWNIK);
         
         if (odb_msg != -1) {
             int id_kasy_nadawcy = msg_in.id_kasy;
@@ -107,7 +107,7 @@ int main() {
             res.operacja = wynik;
             res.id_kasy = id_kasy_nadawcy;
             
-            WyslijKomunikatVIP(sem_id, msg_id, &res, size);
+            WyslijKomunikatVIP(msg_id, &res, size);
             
         } else {
             if (errno == EINTR) continue;

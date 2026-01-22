@@ -1,6 +1,6 @@
 #include "kasa_samoobslugowa.h"
 #include "pracownik_obslugi.h"
-#include "wspolne.h"
+#include "pamiec_wspoldzielona.h"
 #include "kolejki.h"
 #include <string.h>
 #include <signal.h>
@@ -34,8 +34,10 @@ void ZwolnijKase(int id_kasy, StanSklepu* stan, int sem_id) {
     if (!stan || id_kasy < 0 || id_kasy >= LICZBA_KAS_SAMOOBSLUGOWYCH) return;
     
     if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) != 0) return;
+    
     stan->kasy_samoobslugowe[id_kasy].stan = KASA_WOLNA;
     stan->kasy_samoobslugowe[id_kasy].id_klienta = -1;
+    
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 }
 
@@ -59,7 +61,8 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, unsigned int liczba_
         if (rand() % SZANSA_BLOKADY == 0) {
             ZapiszLogF(LOG_OSTRZEZENIE, "Kasa samoobslugowa [%d]: BLOKADA!", id_kasy + 1);
 
-            int wynik_blokady = WyslijZadanieObslugi(id_kasy, OP_ODBLOKOWANIE_KASY, 0);
+
+            int wynik_blokady = WyslijZadanieObslugi(id_kasy, OP_ODBLOKOWANIE_KASY, 0, sem_id);
             
             if (wynik_blokady == 1) {
                 if (ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA) == 0) {
@@ -79,17 +82,17 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, unsigned int liczba_
     if (ma_alkohol) {
         ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Weryfikacja wieku...", id_kasy + 1);
         
-        int wynik = WyslijZadanieObslugi(id_kasy, OP_WERYFIKACJA_WIEKU, wiek);
+        int wynik = WyslijZadanieObslugi(id_kasy, OP_WERYFIKACJA_WIEKU, wiek, sem_id);
         
         if (wynik == -1) {
             return -3;
         } else if (wynik == 0) {
-            ZapiszLogF(LOG_BLAD, "Kasa [%d]: Klient niepelnoletni!", id_kasy + 1);
+            ZapiszLogF(LOG_BLAD, "Kasa samoobslugowa [%d]: Klient niepelnoletni!", id_kasy + 1);
             return -2;
         }
     }
     
-    ZapiszLogF(LOG_INFO, "Kasa [%d]: Klient [%d] zaplacil %.2f PLN.", id_kasy + 1, id_klienta, suma);
+    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Klient [%d] zaplacil %.2f PLN.", id_kasy + 1, id_klienta, suma);
     return 0;
 }
 
@@ -107,26 +110,44 @@ static int ObsluzKlienta(int id_kasy) {
     MsgKasaSamo msg;
     size_t msg_size = sizeof(MsgKasaSamo) - sizeof(long);
 
-    int res = OdbierzKomunikat(g_msg_id, &msg, msg_size, MSG_TYPE_SAMOOBSLUGA, 0);
+    //Debug: Oczekiwanie
+    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Czekam na klienta..", id_kasy + 1);
 
+    //Uzywamy wersji bez automatycznej sygnalizacji semafora
+    int res = OdbierzKomunikat(g_msg_id, &msg, msg_size, MSG_TYPE_SAMOOBSLUGA, 0, g_sem_id, SEM_KOLEJKA_SAMO);
+
+    if (g_msg_id != PobierzIdKolejki(ID_IPC_SAMO)) printf("g_msg_id: %d\n", g_msg_id);
+
+    int val_sem = semctl(g_sem_id, SEM_KOLEJKA_SAMO, GETVAL);
+    ZapiszLogF(LOG_BLAD, "NieOdebralem. Semafor SEM_KOLEJKA_SAMO: %d", val_sem);
     if (res != -1) {
-        //Sprawdzenie czy komunikat nie jest przedawniony
-        if (time(NULL) - msg.timestamp > CZAS_OCZEKIWANIA_T) {
-            return 1; //Pomijamy
+        
+        ZapiszLogF(LOG_BLAD, "Odebralem. Semafor SEM_KOLEJKA_SAMO: %d", val_sem);
+        //Sprawdzenie czy klient wycofal sie do kasy stacjonarnej
+        if (CzyPominiety(g_stan_sklepu, g_sem_id, msg.id_klienta)) {
+            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Pomijam klienta [ID: %d] - wycofal sie.", id_kasy + 1, msg.id_klienta);
+             if (semctl(g_sem_id, SEM_KOLEJKA_SAMO, GETVAL) == 0) {
+                ZwolnijSemafor(g_sem_id, SEM_KOLEJKA_SAMO); 
+             }
+            return 1; //Pomiń i kontynuuj
         }
 
         ZajmijKase(id_kasy, msg.id_klienta, g_stan_sklepu, g_sem_id);
 
-        int wynik = ObsluzKlientaSamoobslugowo(id_kasy, msg.id_klienta, msg.liczba_produktow, 
-                                                msg.suma_koszyka, msg.ma_alkohol, msg.wiek, 
-                                                g_stan_sklepu, g_sem_id);
+        int wynik = ObsluzKlientaSamoobslugowo(id_kasy, msg.id_klienta, msg.liczba_produktow, msg.suma_koszyka, msg.ma_alkohol, msg.wiek, g_stan_sklepu, g_sem_id);
 
         MsgKasaSamo res_msg;
         res_msg.mtype = MSG_RES_SAMOOBSLUGA_BASE + msg.id_klienta;
         res_msg.id_klienta = wynik;
         res_msg.liczba_produktow = id_kasy;
         
-        WyslijKomunikatVIP(g_sem_id, g_msg_id, &res_msg, msg_size);
+        WyslijKomunikatVIP(g_msg_id, &res_msg, msg_size);
+        
+        //Zwolnij semafor bo odbralismy miejsce - tylko jesli 0 (ktos czeka)
+        if (semctl(g_sem_id, SEM_KOLEJKA_SAMO, GETVAL) == 0) {
+            ZwolnijSemafor(g_sem_id, SEM_KOLEJKA_SAMO);
+        }
+
         ZwolnijKase(id_kasy, g_stan_sklepu, g_sem_id);
 
         return 1;
@@ -138,12 +159,12 @@ static int ObsluzKlienta(int id_kasy) {
 //Logika procesu potomnego (kasy 1-5)
 static void LogikaKasyPotomnej(int id_kasy) {
     srand(time(NULL) ^ getpid());
-    ZapiszLogF(LOG_INFO, "Kasa [%d]: Uruchomiona (PID: %d).", id_kasy + 1, getpid());
+    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Uruchomiona (PID: %d).", id_kasy + 1, getpid());
 
     int wynik;
     while ((wynik = ObsluzKlienta(id_kasy)) > 0);
     
-    ZapiszLogF(LOG_INFO, "Kasa [%d]: Zakonczona.", id_kasy + 1);
+    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Zakonczona.", id_kasy + 1);
 }
 
 //Uruchomienie nowej kasy (fork)
@@ -292,7 +313,6 @@ static void ObslugaSIGTERM(int sig) {
     (void)sig;
 
     if (!g_czy_rodzic) {
-        ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [PID: %d]: ", getpid());
         if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
         _exit(0);
     }
