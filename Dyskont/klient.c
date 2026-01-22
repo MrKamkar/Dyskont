@@ -130,12 +130,12 @@ void WydrukujParagon(const Klient* k, const char* typ_kasy, int id_kasy) {
 
 
 //Flaga dla SIGUSR1 - wybudzenie z msgrcv przez watek sprawdzajacy
-static volatile sig_atomic_t g_wycofaj_do_stacjonarnej = 0;
+static volatile sig_atomic_t g_idz_do_stacjonarnej = 0;
 
-//Handler SIGUSR1 - sygnal od watku sprawdzajacego wolna kase stacjonarna
+//Sygnal od watku sprawdzajacego wolna kase stacjonarna przerywajacy czekanie w kolejce do kasy samoobslugowej
 void ObslugaSIGUSR1(int sig) {
     (void)sig;
-    g_wycofaj_do_stacjonarnej = 1;
+    g_idz_do_stacjonarnej = 1;
 }
 
 //Struktura argumentow dla watku sprawdzajacego
@@ -159,6 +159,7 @@ void* WatekSprawdzajacyKase(void* arg) {
     sleep(CZAS_OCZEKIWANIA_T);
     
     //Sprawdzamy czy jest wolna kasa stacjonarna
+    ZapiszLogF(LOG_DEBUG, "Watek: Sprawdzam dostepnosc kas stacjonarnych dla klienta [ID: %d]..", args->id_klienta);
     ZajmijSemafor(args->sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     //Czy klient jest juz obslugiwany przez kase samoobslugowa?
@@ -179,7 +180,7 @@ void* WatekSprawdzajacyKase(void* arg) {
                 }
             }
     } else {
-        ZapiszLogF(LOG_DEBUG, "Watek: Klient [ID: %d] jest w trakcie obslugi, anuluje wycofanie.", args->id_klienta);
+        ZapiszLogF(LOG_INFO, "Watek: Klient [ID: %d] jest w trakcie obslugi, nie moge go wycofac", args->id_klienta);
     }
     
     ZwolnijSemafor(args->sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
@@ -188,7 +189,7 @@ void* WatekSprawdzajacyKase(void* arg) {
         //Dodaj klienta do tablicy pomijanych
         DodajPomijanego(args->stan_sklepu, args->sem_id, args->id_klienta);
         
-        ZapiszLogF(LOG_INFO, "Watek: Klient [ID: %d] wycofany do kasy stacjonarnej (wolna kasa).", args->id_klienta);
+        ZapiszLogF(LOG_INFO, "Watek: Klient [ID: %d] wycofany do kasy stacjonarnej", args->id_klienta);
         
         //Wyslij sygnal SIGUSR1 do klienta, zeby przerwac msgrcv
         kill(args->pid_klienta, SIGUSR1);
@@ -212,7 +213,7 @@ void ObslugaSIGTERM(int sig) {
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
     
-    //Wyslij SIGTERM do calej grupy procesow (czyli do wszystkich dzieci)
+    //Wyslij SIGTERM do wszystkich dzieci
     kill(0, SIGTERM);
     
     //Czekaj na zakonczenie wszystkich dzieci i loguj
@@ -310,6 +311,7 @@ int main(int argc, char* argv[]) {
             int wybor_kasy = rand() % 100;
             int idzie_do_samoobslugowej = (wybor_kasy < 95);
             int obsluzony = 0;  //Flaga czy klient zostal obsluzony
+            int kod_wyjscia = 0; //Kod wyjscia procesu (0=sukces)
 
             if (idzie_do_samoobslugowej) {
                 int msg_id_samo = PobierzIdKolejki(ID_IPC_SAMO);
@@ -324,7 +326,8 @@ int main(int argc, char* argv[]) {
                     msg.wiek = klient->wiek;
                     msg.timestamp = time(NULL);
 
-                    ZapiszLogF(LOG_INFO, "Klient [ID: %d] ustawia sie w kolejce do kasy samoobslugowej.", klient->id);
+                    ZapiszLogF(LOG_INFO, "Klient [ID: %d] ustawia sie w kolejce do kasy samoobslugowej", klient->id);
+                    ZapiszLogF(LOG_DEBUG, "Klient [ID: %d] wysyla prosbe do kasy samoobslugowej..", klient->id);
 
                     //Utworzenie watku sprawdzajacego wolna kase stacjonarna
                     pthread_t watek_sprawdzajacy;
@@ -337,7 +340,7 @@ int main(int argc, char* argv[]) {
                         args->stan_sklepu = g_stan_sklepu;
                         args->sem_id = g_sem_id;
                         
-                        g_wycofaj_do_stacjonarnej = 0;
+                        g_idz_do_stacjonarnej = 0;
                         if (pthread_create(&watek_sprawdzajacy, NULL, WatekSprawdzajacyKase, args) == 0) {
                             watek_utworzony = 1;
                         } else {
@@ -348,59 +351,65 @@ int main(int argc, char* argv[]) {
                         ZapiszLogF(LOG_BLAD, "Klient [ID: %d] - brak pamieci dla watku sprawdzajacego", klient->id);
                     }
 
-                    int sukces = 0;
                     int id_kasy_samo = -1;
                     if (WyslijKomunikat(msg_id_samo, &msg, sizeof(MsgKasaSamo) - sizeof(long), g_sem_id, SEM_KOLEJKA_SAMO) == 0) {
+                        
                         //Czekamy na odpowiedz blokujaco
+                        ZapiszLogF(LOG_DEBUG, "Klient [ID: %d] czekam na odpowiedz od kasy samoobslugowej..", klient->id);
                         MsgKasaSamo res;
                         int wynik = OdbierzKomunikat(msg_id_samo, &res, sizeof(MsgKasaSamo) - sizeof(long), MSG_RES_SAMOOBSLUGA_BASE + klient->id, 0, g_sem_id, SEM_KOLEJKA_SAMO);
                         
                         if (wynik == 0) {
+                            ZapiszLogF(LOG_DEBUG, "Klient [ID: %d] otrzymal odpowiedz od kasy samoobslugowej [%d]", klient->id, res.liczba_produktow + 1);
                             id_kasy_samo = res.liczba_produktow;
+                            
                             //W res.id_klienta jest kod wyniku operacji (0 = OK)
                             if (res.id_klienta == 0) {
-                                sukces = 1;
+                                //Sukces - drukujemy paragon
+                                WydrukujParagon(klient, "Kasa Samoobslugowa", id_kasy_samo + 1);
+                                obsluzony = 1; 
                             } else if (res.id_klienta == -2) {
-                                ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] niepelnoletni (probowal kupic alkohol). Opuszcza sklep bez zakupow.", klient->id);
-                                obsluzony = 1; //Traktujemy jako "obsluzonego"
+                                ZapiszLogF(LOG_BLAD, "Klient [ID: %d] niepelnoletni (probowal kupic alkohol). Opuszcza sklep bez zakupow", klient->id);
+                                obsluzony = 1; //Traktujemy jako "obsluzonego" (wyrzucony)
+                                kod_wyjscia = 1; //Pozniejsze wyjscie z kodem 1
                             } else {
-                                ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] nieobsluzony w kasie samoobslugowej (kod: %d).", klient->id, res.id_klienta);
+                                ZapiszLogF(LOG_BLAD, "Klient [ID: %d] nieobsluzony w kasie samoobslugowej (kod: %d)", klient->id, res.id_klienta);
                             }
+                        } else {
+                           //Prawdopodobnie wystapil sygnal przerwania czekania w kolejce do kas samoobslugowych
+                           ZwolnijSemafor(g_sem_id, SEM_KOLEJKA_SAMO);
                         }
                     }
                     
-                    //Anulowanie watku sprawdzajacego (jesli jeszcze dziala i byl utworzony)
+                    //Anulowanie watku sprawdzajacego jesli jeszcze dziala i byl utworzony
                     if (watek_utworzony) {
                         pthread_cancel(watek_sprawdzajacy);
                         pthread_join(watek_sprawdzajacy, NULL);
                     }
                     
-                    if (sukces) {
-                        //Sukces - drukujemy paragon i konczymy
-                        WydrukujParagon(klient, "Kasa Samoobslugowa", id_kasy_samo + 1);
-                        obsluzony = 1; //KLUCZOWE: Oznacz ze klient zostal obsluzony!
-                    } else if (g_wycofaj_do_stacjonarnej) {
-                        //Watek sprawdzajacy wyslal sygnal - idziemy do stacjonarnej
-                        ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] - wolna kasa stacjonarna, wycofuje sie z samoobslugowej.", klient->id);
-                        idzie_do_samoobslugowej = 0;
-                    } else if (errno == EINTR) {
-                        //Inny sygnal (np. SIGTERM)
-                        ZapiszLogF(LOG_BLAD, "Klient [ID: %d] - przerwano oczekiwanie (errno: %d)", klient->id, errno);
+                    if (!obsluzony) {
+                        if (g_idz_do_stacjonarnej) {
+                            //Watek sprawdzajacy wyslal sygnal - idziemy do stacjonarnej
+                            ZapiszLogF(LOG_OSTRZEZENIE, "Klient [ID: %d] - wolna kasa stacjonarna, wycofuje sie z samoobslugowej", klient->id);
+                            idzie_do_samoobslugowej = 0;
+                        } else if (errno == EINTR) {
+                            //SIGTERM
+                            ZapiszLogF(LOG_BLAD, "Klient [ID: %d] - przerwano oczekiwanie (errno: %d)", klient->id, errno);
+                        }
                     }
                 }
-
-
             }
             
-            //Jesli nie obsluzony przy samoobslugowej - idz do stacjonarnej
+            //Jesli nie obsluzony przy samoobslugowej to idzie do stacjonarnej
             if (!obsluzony) {
-                //Kasy stacjonarne - klient trafia do wspolnej kolejki
+                //Klient trafia do wspolnej kolejki
                 int msg_id_wspolna = PobierzIdKolejki(ID_IPC_KASA_WSPOLNA);
                 
                 if (!idzie_do_samoobslugowej) {
-                    ZapiszLogF(LOG_INFO, "Klient [ID: %d] ustawia sie we wspolnej kolejce do kas stacjonarnych.", klient->id);
+                    ZapiszLogF(LOG_INFO, "Klient [ID: %d] ustawia sie we wspolnej kolejce do kas stacjonarnych", klient->id);
                 }
                 
+                //Tworzenie komunikatu
                 MsgKasaStacj msg;
                 msg.mtype = MSG_TYPE_KASA_WSPOLNA;
                 msg.id_klienta = klient->id;
@@ -409,14 +418,16 @@ int main(int argc, char* argv[]) {
                 msg.ma_alkohol = CzyZawieraAlkohol(klient);
                 msg.wiek = klient->wiek;
 
+                //Wyslanie komunikatu do kolejki kas stacjonarnych
                 if (WyslijKomunikat(msg_id_wspolna, &msg, sizeof(MsgKasaStacj) - sizeof(long), g_sem_id, SEM_KOLEJKA_WSPOLNA) == 0) {
                     MsgKasaStacj res;
                     size_t msg_size = sizeof(MsgKasaStacj) - sizeof(long);
                     long mtype_res = MSG_RES_STACJONARNA_BASE + klient->id;
                     
-                    //Czekamy blokujaco na odpowiedz ze wspolnej kolejki
-                    if (OdbierzKomunikat(msg_id_wspolna, &res, msg_size, mtype_res, 0, g_sem_id, SEM_KOLEJKA_WSPOLNA) == 0) {
-                        ZapiszLogF(LOG_INFO, "Klient [ID: %d] zakonczyl zakupy przy kasie stacjonarnej %d.", klient->id, res.liczba_produktow + 1);
+                    //Oczekiwanie na odpowiedz od kasy stacjonarnej
+                    ZapiszLogF(LOG_DEBUG, "Klient [ID: %d] czeka na odpowiedz od kasy stacjonarnej..", klient->id);
+                    if (OdbierzKomunikat(msg_id_wspolna, &res, msg_size, mtype_res, 0, -1, -1) == 0) {
+                        ZapiszLogF(LOG_INFO, "Klient [ID: %d] zakonczyl zakupy przy kasie stacjonarnej %d", klient->id, res.liczba_produktow + 1);
                         WydrukujParagon(klient, "Kasa Stacjonarna", res.liczba_produktow + 1);
                     }
                 }
@@ -427,8 +438,10 @@ int main(int argc, char* argv[]) {
             //Wychodzi - sygnalizujemy watkowi skalujacemu kas samoobslugowych
             ZwolnijSemafor(g_sem_id, SEM_NOWY_KLIENT);
             ZwolnijSemafor(g_sem_id, SEM_WEJSCIE_DO_SKLEPU);
+
+            //Konczenie dzialania procesu
             if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
-            exit(0);
+            exit(kod_wyjscia);
 
         } else if (pid == -1) {
             ZapiszLogF(LOG_BLAD, "Blad fork() w generatorze klientow");
@@ -441,7 +454,12 @@ int main(int argc, char* argv[]) {
     int status;
     while ((pid_wait = wait(&status)) > 0) {
         if (WIFEXITED(status)) {
-            ZapiszLogF(LOG_INFO, "Klient [PID: %d] zakonczyl zakupy (status: %d)", pid_wait, WEXITSTATUS(status));
+            int exit_code = WEXITSTATUS(status);
+            if (exit_code == 1) {
+                ZapiszLogF(LOG_BLAD, "Klient [PID: %d] odlozyl zakupy i wyszedl ze sklepu.", pid_wait);
+            } else {
+                ZapiszLogF(LOG_INFO, "Klient [PID: %d] zakonczyl zakupy (status: %d)", pid_wait, exit_code);
+            }
         } else if (WIFSIGNALED(status)) {
             ZapiszLogF(LOG_INFO, "Klient [PID: %d] zostal zabity sygnalem %d", pid_wait, WTERMSIG(status));
         }

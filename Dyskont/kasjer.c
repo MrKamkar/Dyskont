@@ -22,40 +22,8 @@ static int g_msg_id_1 = -1;
 static int g_msg_id_2 = -1;
 static int g_czy_rodzic = 1;
 static pthread_t g_watek_zarzadzajacy;
-static volatile sig_atomic_t g_timeout = 0;
-static volatile sig_atomic_t g_zamykanie = 0;
+static volatile sig_atomic_t g_uplynal_czas = 0;
 
-//Sprawdza czy klient zostal zmigrowany z kasy1 do kasy2 (uzywa pamieci wspoldzielonej)
-//UWAGA: Szuka POZYTYWNEGO id_klienta (odroznienie od samoobslugowej ktora uzywa negatywnych)
-static int CzyZmigrowany(int id_klienta) {
-    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    int wynik = 0;
-    unsigned int max = g_stan_sklepu->max_klientow_rownoczesnie;
-    for (unsigned int i = 0; i < max; i++) {
-        if (g_stan_sklepu->pomijani_klienci[i] == id_klienta) {
-            //Usun z tablicy (juz nie potrzebujemy)
-            g_stan_sklepu->pomijani_klienci[i] = 0;
-            wynik = 1;
-            break;
-        }
-    }
-    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    return wynik;
-}
-
-//Dodaje klienta do tablicy zmigrowanych (migracja kasa1->kasa2)
-//UWAGA: Zapisuje POZYTYWNE id_klienta (odroznienie od samoobslugowej)
-static void DodajZmigrowanego(int id_klienta) {
-    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    unsigned int max = g_stan_sklepu->max_klientow_rownoczesnie;
-    for (unsigned int i = 0; i < max; i++) {
-        if (g_stan_sklepu->pomijani_klienci[i] == 0) {
-            g_stan_sklepu->pomijani_klienci[i] = id_klienta;
-            break;
-        }
-    }
-    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-}
 
 //Handler SIGTERM
 static void ObslugaSIGTERM(int sig) {
@@ -71,8 +39,10 @@ static void ObslugaSIGTERM(int sig) {
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
     
-    g_zamykanie = 1;
-    
+    //Anulowanie watku zarzadzajacego
+    pthread_cancel(g_watek_zarzadzajacy);
+    pthread_join(g_watek_zarzadzajacy, NULL);
+
     kill(0, SIGTERM);
     
     //Czekamy na zakonczenie wszystkich dzieci
@@ -87,207 +57,79 @@ static void ObslugaSIGTERM(int sig) {
         }
     }
 
-    ZapiszLog(LOG_INFO, "Kasy stacjonarne: Zakonczono wszystkie procesy potomne.");
+    ZapiszLog(LOG_INFO, "Kasy stacjonarne: Zakonczono wszystkie procesy potomne");
 
     if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
-    ZapiszLog(LOG_INFO, "Kasy stacjonarne: Zakonczono.");
+    ZapiszLog(LOG_INFO, "Kasy stacjonarne: Zakonczono");
     _exit(0);
 }
 
 //Handler SIGALRM - timeout bezczynnosci
 static void ObslugaSIGALRM(int sig) {
     (void)sig;
-    g_timeout = 1;
+    g_uplynal_czas = 1;
 }
 
-//Forward declarations dla handlerów sygnałów
-static pid_t UruchomKase2();
-static void ZamknijKase(int id_kasy);
-
-//Handler SIGUSR1 - otwieranie kasy 2
-static void ObslugaSIGUSR1(int sig) {
-    (void)sig;
-    
-    if (!g_stan_sklepu || !g_czy_rodzic) return;
-    
-    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    StanKasy stan = g_stan_sklepu->kasy_stacjonarne[1].stan;
-    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    
-    if (stan == KASA_ZAMKNIETA) {
-        UruchomKase2();
-        ZapiszLog(LOG_INFO, "Sygnal SIGUSR1: Otwarto kase 2.");
-    } else {
-        ZapiszLog(LOG_OSTRZEZENIE, "Sygnal SIGUSR1: Kasa 2 jest juz otwarta.");
-    }
-}
-
-//Handler SIGUSR2 - zamykanie kasy (1 lub 2 wg id_kasy_do_zamkniecia)
-static void ObslugaSIGUSR2(int sig) {
-    (void)sig;
-    
-    if (!g_stan_sklepu || !g_czy_rodzic) return;
-    
-    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    int id_kasy = g_stan_sklepu->id_kasy_do_zamkniecia;
-    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    
-    if (id_kasy == 0 || id_kasy == 1) {
-        ZamknijKase(id_kasy);
-        ZapiszLogF(LOG_INFO, "Sygnal SIGUSR2: Zamykanie kasy %d.", id_kasy + 1);
-    }
-}
-
-//Obsluga klienta przez kasjera
-static void ObsluzKlientaStacjonarnie(int id_kasy, int id_klienta, unsigned int liczba_produktow, double suma) {
-    ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Rozpoczynam obsluge klienta [ID: %d], produktow: %u",
-            id_kasy + 1, id_klienta, liczba_produktow);
-    
-    //Symulacja skanowania produktow
-    for (unsigned int i = 0; i < liczba_produktow; i++) {
-        SYMULACJA_USLEEP(g_stan_sklepu, CZAS_SKASOWANIA_PRODUKTU_MS * 1000);
-    }
-    
-    ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Zakonczono obsluge klienta [ID: %d]. Suma: %.2f PLN",
-            id_kasy + 1, id_klienta, suma);
-}
-
-//Obsługa jednego klienta z kolejki (dla kasy 1 - sprawdza migracje)
-static int ObsluzKlientaKasa1(int msg_id) {
+//Uniwersalna funkcja obslugi klienta przez kase stacjonarna
+static int ObsluzKlienta(int nr_kasy, int msg_id, int sem_kolejki) {
     MsgKasaStacj msg_in;
     size_t msg_size = sizeof(MsgKasaStacj) - sizeof(long);
     
-    g_timeout = 0;
+    g_uplynal_czas = 0;
     alarm(TIMEOUT_BEZCZYNNOSCI_S);
     
     //Odbior blokujacy - czekamy na klienta
-    int res = OdbierzKomunikat(msg_id, &msg_in, msg_size, 0, 0, g_sem_id, SEM_KOLEJKA_KASA_1);
+    int res = OdbierzKomunikat(msg_id, &msg_in, msg_size, 0, 0, g_sem_id, sem_kolejki);
     
     alarm(0);
     
     if (res != -1) {
         int id_klienta = msg_in.id_klienta;
         
-        //Sprawdz czy klient zostal zmigrowany do kasy 2
-        if (CzyZmigrowany(id_klienta)) {
-            ZapiszLogF(LOG_INFO, "Kasa 1: Pomijam klienta [ID: %d] - zmigrowany do kasy 2.", id_klienta);
-            return 1; //Kontynuuj - pomiń tego klienta
+        //Kasa 1 sprawdza czy klient zostal zmigrowany do kasy 2
+        if (nr_kasy == 0) {
+            if (CzyZmigrowany(g_stan_sklepu, g_sem_id, id_klienta)) {
+                ZapiszLogF(LOG_INFO, "Kasa 1: Pomijam klienta [ID: %d] - zmigrowany do kasy 2", id_klienta);
+                return 1; //Kontynuuj - pomiń tego klienta
+            }
         }
         
         unsigned int liczba_produktow = msg_in.liczba_produktow;
         double suma = msg_in.suma_koszyka;
         
         //Zaktualizuj stan kasy na ZAJETA
-        //ZapiszLog(LOG_DEBUG, "Kasjer 1: Zajmuje mutex (stan ZAJETA)");
         ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        g_stan_sklepu->kasy_stacjonarne[0].stan = KASA_ZAJETA;
-        g_stan_sklepu->kasy_stacjonarne[0].id_klienta = id_klienta;
+        g_stan_sklepu->kasy_stacjonarne[nr_kasy].stan = KASA_ZAJETA;
+        g_stan_sklepu->kasy_stacjonarne[nr_kasy].id_klienta = id_klienta;
         ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        //ZapiszLog(LOG_DEBUG, "Kasjer 1: Zwolniono mutex (stan ZAJETA)");
         
         //Obsluga klienta
-        ObsluzKlientaStacjonarnie(0, id_klienta, liczba_produktow, suma);
+        SymulujSkanowanie(nr_kasy, id_klienta, liczba_produktow, suma);
         
         //Wyslij potwierdzenie do klienta przez WSPOLNA kolejke
         MsgKasaStacj msg_out;
         msg_out.mtype = MSG_RES_STACJONARNA_BASE + id_klienta;
         msg_out.id_klienta = id_klienta;
-        msg_out.liczba_produktow = 0; //ID kasy = 0
-        WyslijKomunikatVIP(g_msg_id_wspolna, &msg_out, msg_size);
-        
-        //Zwolnij kase
-        //ZapiszLog(LOG_DEBUG, "Kasjer 1: Zajmuje mutex (stan WOLNA)");
-        ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        g_stan_sklepu->kasy_stacjonarne[0].stan = KASA_WOLNA;
-        g_stan_sklepu->kasy_stacjonarne[0].id_klienta = -1;
-        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        //ZapiszLog(LOG_DEBUG, "Kasjer 1: Zwolniono mutex (stan WOLNA)");
-        
-        return 1; //Sukces - kontynuuj
-    } else {
-        if (errno == EINTR && g_timeout) {
-            return 0; //Timeout - zamknij kase
-        }
-        if (errno == EINTR) {
-            return -1; //Przerwany sygnalem - konczymy
-        }
-        ZapiszLogF(LOG_BLAD, "Kasjer [Kasa 1]: Blad msgrcv (errno=%d)", errno);
-        return -1;
-    }
-}
-
-//Obsługa jednego klienta z kolejki dla kasy 2
-static int ObsluzKlientaKasa2(int msg_id) {
-    MsgKasaStacj msg_in;
-    size_t msg_size = sizeof(MsgKasaStacj) - sizeof(long);
-    
-    g_timeout = 0;
-    alarm(TIMEOUT_BEZCZYNNOSCI_S);
-    
-    //Odbior blokujacy - czekamy na klienta
-    int res = OdbierzKomunikat(msg_id, &msg_in, msg_size, 0, 0, g_sem_id, SEM_KOLEJKA_KASA_2);
-    
-    alarm(0);
-    
-    if (res != -1) {
-        int id_klienta = msg_in.id_klienta;
-        unsigned int liczba_produktow = msg_in.liczba_produktow;
-        double suma = msg_in.suma_koszyka;
-        
-        //Zaktualizuj stan kasy na ZAJETA
-        ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        g_stan_sklepu->kasy_stacjonarne[1].stan = KASA_ZAJETA;
-        g_stan_sklepu->kasy_stacjonarne[1].id_klienta = id_klienta;
-        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        
-        //Obsluga klienta
-        ObsluzKlientaStacjonarnie(1, id_klienta, liczba_produktow, suma);
-        
-        //Wyslij potwierdzenie do klienta przez WSPOLNA kolejke
-        MsgKasaStacj msg_out;
-        msg_out.mtype = MSG_RES_STACJONARNA_BASE + id_klienta;
-        msg_out.id_klienta = id_klienta;
-        msg_out.liczba_produktow = 1; //ID kasy = 1
+        msg_out.liczba_produktow = nr_kasy; //ID kasy
         WyslijKomunikatVIP(g_msg_id_wspolna, &msg_out, msg_size);
         
         //Zwolnij kase
         ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-        g_stan_sklepu->kasy_stacjonarne[1].stan = KASA_WOLNA;
-        g_stan_sklepu->kasy_stacjonarne[1].id_klienta = -1;
+        g_stan_sklepu->kasy_stacjonarne[nr_kasy].stan = KASA_WOLNA;
+        g_stan_sklepu->kasy_stacjonarne[nr_kasy].id_klienta = -1;
         ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
         return 1; //Sukces - kontynuuj
     } else {
-        if (errno == EINTR && g_timeout) {
-            return 0; //Timeout - zamknij kase
+        if (errno == EINTR && g_uplynal_czas) {
+            return 0; //Uplynal czas bezczynnosci, wiec zamknij kase
         }
         if (errno == EINTR) {
-            return -1; //Przerwany sygnalem - konczymy
+            return -1; //Przerwany sygnalem, wiec zakoncz
         }
-        ZapiszLogF(LOG_BLAD, "Kasjer [Kasa 2]: Blad msgrcv (errno=%d)", errno);
+        ZapiszLogF(LOG_BLAD, "Kasjer [Kasa %d]: Blad msgrcv (errno=%d)", nr_kasy + 1, errno);
         return -1;
     }
-}
-
-//Logika procesu potomnego (Kasa 2)
-static void LogikaKasy2() {
-    srand(time(NULL) ^ getpid());
-    ZapiszLogF(LOG_INFO, "Kasa stacjonarna 2: Uruchomiona (PID: %d).", getpid());
-    
-    int wynik;
-    while ((wynik = ObsluzKlientaKasa2(g_msg_id_2)) > 0);
-    
-    if (wynik == 0) {
-        ZapiszLog(LOG_INFO, "Kasa 2: Timeout 30s - zamykanie.");
-    }
-    
-    //Oznacz jako zamknieta
-    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    g_stan_sklepu->kasy_stacjonarne[1].stan = KASA_ZAMKNIETA;
-    g_stan_sklepu->kasy_stacjonarne[1].pid = 0;
-    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    
-    ZapiszLog(LOG_INFO, "Kasa stacjonarna 2: Zakonczona.");
 }
 
 //Uruchomienie kasy 2 (fork)
@@ -299,9 +141,28 @@ static pid_t UruchomKase2() {
         sigset_t set;
         sigemptyset(&set);
         pthread_sigmask(SIG_SETMASK, &set, NULL);
-        
         g_czy_rodzic = 0;
-        LogikaKasy2();
+
+        //Logika kasy 2
+        srand(time(NULL) ^ getpid());
+        ZapiszLogF(LOG_INFO, "Kasa stacjonarna 2: Uruchomiona (PID: %d)", getpid());
+        
+        int wynik;
+        while ((wynik = ObsluzKlienta(1, g_msg_id_2, SEM_KOLEJKA_KASA_2)) > 0);
+        
+        if (wynik == 0) {
+            ZapiszLog(LOG_INFO, "Kasa 2: Timeout 30s - zamykanie");
+        }
+        
+        //Oznacz jako zamknieta
+        ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        g_stan_sklepu->kasy_stacjonarne[1].stan = KASA_ZAMKNIETA;
+        g_stan_sklepu->kasy_stacjonarne[1].pid = 0;
+        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        
+        ZapiszLog(LOG_INFO, "Kasa stacjonarna 2: Zakonczona");
+
+        //Zwalnianie zasobow
         OdlaczPamiecWspoldzielona(g_stan_sklepu);
         exit(0);
     } else if (pid > 0) {
@@ -326,10 +187,58 @@ static void ZamknijKase(int id_kasy) {
         g_stan_sklepu->kasy_stacjonarne[id_kasy].stan = KASA_ZAMYKANA;
         ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
-        ZapiszLogF(LOG_INFO, "Kasa %d: Oznaczona jako ZAMYKANA - obsluzy reszte kolejki.", id_kasy + 1);
+        ZapiszLogF(LOG_INFO, "Kasa %d: Oznaczona jako ZAMYKANA - obsluzy reszte kolejki", id_kasy + 1);
     } else {
         ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     }
+}
+
+//Handler SIGUSR1 - otwieranie kasy 2
+static void ObslugaSIGUSR1(int sig) {
+    (void)sig;
+    
+    if (!g_stan_sklepu || !g_czy_rodzic) return;
+    
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    StanKasy stan = g_stan_sklepu->kasy_stacjonarne[1].stan;
+    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    
+    if (stan == KASA_ZAMKNIETA) {
+        UruchomKase2();
+        ZapiszLog(LOG_INFO, "Sygnal SIGUSR1: Otwarto kase 2");
+    } else {
+        ZapiszLog(LOG_OSTRZEZENIE, "Sygnal SIGUSR1: Kasa 2 jest juz otwarta");
+    }
+}
+
+//Handler SIGUSR2 - zamykanie kasy (1 lub 2 wg id_kasy_do_zamkniecia)
+static void ObslugaSIGUSR2(int sig) {
+    (void)sig;
+    
+    if (!g_stan_sklepu || !g_czy_rodzic) return;
+    
+    ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    int id_kasy = g_stan_sklepu->id_kasy_do_zamkniecia;
+    ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+    
+    if (id_kasy == 0 || id_kasy == 1) {
+        ZamknijKase(id_kasy);
+        ZapiszLogF(LOG_INFO, "Sygnal SIGUSR2: Zamykanie kasy %d", id_kasy + 1);
+    }
+}
+
+//Symulacja obslugi klienta przez kasjera
+static void SymulujSkanowanie(int id_kasy, int id_klienta, unsigned int liczba_produktow, double suma) {
+    ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Rozpoczynam obsluge klienta [ID: %d], produktow: %u",
+            id_kasy + 1, id_klienta, liczba_produktow);
+    
+    //Symulacja skanowania produktow
+    for (unsigned int i = 0; i < liczba_produktow; i++) {
+        SYMULACJA_USLEEP(g_stan_sklepu, CZAS_SKASOWANIA_PRODUKTU_MS * 1000);
+    }
+    
+    ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Zakonczono obsluge klienta [ID: %d]. Suma: %.2f PLN",
+            id_kasy + 1, id_klienta, suma);
 }
 
 //Przeniesienie klientow ze wspolnej kolejki do kasy 1
@@ -346,7 +255,7 @@ static void MigrujZWspolnejDoKasy1() {
     }
     
     if (przeniesiono > 0) {
-        ZapiszLogF(LOG_INFO, "Przeniesiono %d klientow ze wspolnej kolejki do kasy 1.", przeniesiono);
+        ZapiszLogF(LOG_INFO, "Przeniesiono %d klientow ze wspolnej kolejki do kasy 1", przeniesiono);
     }
 }
 
@@ -357,12 +266,12 @@ static void MigrujJednegoKlienta() {
     
     if (OdbierzKomunikat(g_msg_id_1, &msg, msg_size, 0, IPC_NOWAIT, g_sem_id, SEM_KOLEJKA_KASA_1) == 0) {
         //Dodaj do tablicy zmigrowanych - kasa 1 pominie tego klienta
-        DodajZmigrowanego(msg.id_klienta);
+        DodajZmigrowanego(g_stan_sklepu, g_sem_id, msg.id_klienta);
         
         //Wyslij do kasy 2
         msg.mtype = MSG_TYPE_KASA_2;
         if (WyslijKomunikat(g_msg_id_2, &msg, msg_size, g_sem_id, SEM_KOLEJKA_KASA_2) == 0) {
-            ZapiszLogF(LOG_INFO, "Migracja klienta [ID: %d] z kasy 1 do kasy 2.", msg.id_klienta);
+            ZapiszLogF(LOG_INFO, "Migracja klienta [ID: %d] z kasy 1 do kasy 2", msg.id_klienta);
         }
     }
 }
@@ -376,11 +285,11 @@ static void* WatekZarzadzajacy(void* arg) {
     sigfillset(&set);
     pthread_sigmask(SIG_BLOCK, &set, NULL);
     
-    while (!g_zamykanie) {
-        //Zbieranie zombie (kasa 2)
+    while (1) {
+        //Zbieranie procesow zombie
         int status;
         pid_t pid = waitpid(-1, &status, WNOHANG);
-        if (pid > 0) {
+        if (pid > 0) { //Ktos lub cos zabilo proces potomny recznie
             pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
             ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             if (g_stan_sklepu->kasy_stacjonarne[1].pid == pid) {
@@ -410,13 +319,13 @@ static void* WatekZarzadzajacy(void* arg) {
             ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
             
-            ZapiszLog(LOG_INFO, "Automatyczne otwarcie kasy 1 (kolejka > 3).");
+            ZapiszLog(LOG_INFO, "Automatyczne otwarcie kasy 1 (kolejka > 3)");
             
             //Przenies klientow ze wspolnej do kasy 1
             MigrujZWspolnejDoKasy1();
         }
         
-        //Routing: przekieruj klientow ze wspolnej kolejki do otwartych kas
+        //Przekieruj klientow ze wspolnej kolejki do otwartych kas
         int k1_aktywna = (stan_kasy_1 != KASA_ZAMKNIETA && stan_kasy_1 != KASA_ZAMYKANA);
         int k2_aktywna = (stan_kasy_2 != KASA_ZAMKNIETA && stan_kasy_2 != KASA_ZAMYKANA);
 
@@ -457,12 +366,8 @@ static void* WatekZarzadzajacy(void* arg) {
                 }
                 
                 WyslijKomunikat(msg_id_docelowy, &msg, msg_size, g_sem_id, sem_kolejki_docelowy);
-                
-                //TERAZ zwalniamy semafor - klient opuscil kolejke wspolna i trafil do kasy X
-                ZwolnijSemafor(g_sem_id, SEM_KOLEJKA_WSPOLNA);
 
-                ZapiszLogF(LOG_INFO, "Przekierowano klienta [ID: %d] do kasy %d.",   
-                          msg.id_klienta, msg_id_docelowy == g_msg_id_1 ? 1 : 2);
+                           msg.id_klienta, msg_id_docelowy == g_msg_id_1 ? 1 : 2);
             }
         }
         
@@ -475,10 +380,7 @@ static void* WatekZarzadzajacy(void* arg) {
                 MigrujJednegoKlienta();
             }
         }
-        
-        usleep(100000); //100ms
     }
-    
     return NULL;
 }
 
@@ -533,7 +435,7 @@ int main(int argc, char* argv[]) {
     sa_sigusr2.sa_flags = 0;
     sigaction(SIGUSR2, &sa_sigusr2, NULL);
 
-    ZapiszLog(LOG_INFO, "Kasy stacjonarne: Start.");
+    ZapiszLog(LOG_INFO, "Kasy stacjonarne: Start");
 
     //Kasa 1 - proces glowny (zamknieta na start)
     ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
@@ -547,11 +449,11 @@ int main(int argc, char* argv[]) {
     pthread_create(&g_watek_zarzadzajacy, NULL, WatekZarzadzajacy, NULL);
 
     srand(time(NULL) ^ getpid());
-    ZapiszLogF(LOG_INFO, "Kasa stacjonarna [1]: Uruchomiona (proces glowny, PID: %d).", getpid());
+    ZapiszLogF(LOG_INFO, "Kasa stacjonarna [1]: Uruchomiona (proces glowny, PID: %d)", getpid());
 
     //Glowna petla managera - obsluga kasy 1
     int wynik;
-    while ((wynik = ObsluzKlientaKasa1(g_msg_id_1)) >= 0) {
+    while ((wynik = ObsluzKlienta(0, g_msg_id_1, SEM_KOLEJKA_KASA_1)) >= 0) {
         if (wynik == 0) {
             //Timeout
             ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
@@ -559,13 +461,13 @@ int main(int argc, char* argv[]) {
             
             if (aktualny_stan != KASA_ZAMKNIETA) {
                 g_stan_sklepu->kasy_stacjonarne[0].stan = KASA_ZAMKNIETA;
-                ZapiszLog(LOG_INFO, "Kasa 1: Timeout 30s - zamknieta.");
+                ZapiszLog(LOG_INFO, "Kasa 1: Timeout 30s - zamknieta");
             }
             ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         }
     }
     
-    ZapiszLog(LOG_INFO, "Kasa stacjonarna [1]: Zakonczona.");
+    ZapiszLog(LOG_INFO, "Kasa stacjonarna [1]: Zakonczona");
     
     pthread_cancel(g_watek_zarzadzajacy);
     pthread_join(g_watek_zarzadzajacy, NULL);

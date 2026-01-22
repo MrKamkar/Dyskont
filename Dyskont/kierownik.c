@@ -40,7 +40,7 @@ static void PokazStatusKolejek() {
     unsigned int kasy_samo_czynne = g_stan_sklepu->liczba_czynnych_kas_samoobslugowych;
     ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 
-    printf("\n--- STATUS KOLEJEK (msgctl) ---\n");
+    printf("\n--- STATUS KOLEJEK (msgctl)---\n");
     
     //Wspolna kolejka wyswietlana tylko gdy obie kasy zamkniete
     int obie_zamkniete = (stan_kasy_1 == KASA_ZAMKNIETA) && (stan_kasy_2 == KASA_ZAMKNIETA);
@@ -105,7 +105,7 @@ int main() {
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, NULL);
     
-    printf("Panel kierownika uruchomiony (PID: %d).\n", getpid());
+    printf("Panel kierownika uruchomiony (PID: %d)\n", getpid());
     printf("PID procesu glownego: %d\n", pid_glowny);
     
     int wybor;
@@ -124,13 +124,13 @@ int main() {
         switch (wybor) {
             case 0:
                 dzialaj = 0;
-                printf("Zamykam panel kierownika.\n");
+                printf("Zamykam panel kierownika\n");
                 break;
                 
             case 1:
                 //SIGUSR1 - otwieranie kasy 2
                 if (kill(pid_glowny, SIGUSR1) == 0) {
-                    printf("Wyslano SIGUSR1 - otwieranie kasy 2.\n");
+                    printf("Wyslano SIGUSR1 - otwieranie kasy 2\n");
                 } else {
                     perror("Blad wysylania SIGUSR1");
                 }
@@ -143,7 +143,7 @@ int main() {
                 ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 
                 if (kill(pid_glowny, SIGUSR2) == 0) {
-                    printf("Wyslano SIGUSR2 - zamykanie kasy 1.\n");
+                    printf("Wyslano SIGUSR2 - zamykanie kasy 1\n");
                 } else {
                     perror("Blad wysylania SIGUSR2");
                 }
@@ -155,7 +155,7 @@ int main() {
                 g_stan_sklepu->id_kasy_do_zamkniecia = 1;
                 g_stan_sklepu->polecenie_kierownika = POLECENIE_ZAMKNIJ_KASE;
                 ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                printf("Wyslano polecenie zamkniecia kasy 2.\n");
+                printf("Wyslano polecenie zamkniecia kasy 2\n");
                 break;
                 
             case 4:

@@ -46,24 +46,16 @@ void UsunKolejke(int msg_id) {
 int WyslijKomunikat(int msg_id, void* msg, size_t size, int sem_id, int sem_num) {
     if (msg_id == -1 || !msg) return -1;
     
-    //Sprawdzenie czy jest miejsce w kolejce jesli podano semafor
+    //Wersja ze "strazakiem" - semafor liczy wolne miejsca w kolejce
     if (sem_id != -1 && sem_num != -1) {
-        struct msqid_ds buf;
-        
-        //Pobieramy stan kolejki
-        if (msgctl(msg_id, IPC_STAT, &buf) == 0) {
-            //Jesli brakuje miejsca na ten komunikat
-            if(sem_num == SEM_KOLEJKA_SAMO) printf("%ld\n", buf.msg_qnum);
-            if (buf.msg_cbytes + size > buf.msg_qbytes) {
-                //Blokuj na semaforze
-                if (ZajmijSemafor(sem_id, sem_num) == -1) {
-                    return -1; //Blad semafora
-                }
-            }
-        }
+        if (ZajmijSemafor(sem_id, sem_num) == -1) return -1;
     }
 
     if (msgsnd(msg_id, msg, size, 0) == -1) {
+        //W razie bledu wyslania (np. kolejka usunieta), oddajemy semafor
+        if (sem_id != -1 && sem_num != -1) {
+            ZwolnijSemafor(sem_id, sem_num);
+        }
         return -1;
     }
 
@@ -78,15 +70,9 @@ int OdbierzKomunikat(int msg_id, void* msg, size_t size, long typ, int flagi, in
         return -1;
     }
 
-    struct msqid_ds buf;
-    if (msgctl(msg_id, IPC_STAT, &buf) == 0) if(sem_num == SEM_KOLEJKA_SAMO) printf("kasa %ld\n", buf.msg_qnum);
-    //Po odebraniu komunikatu zwalnia miejsce, wiec zwalniamy semafor (jesli ktos czeka)
+    //Zwalniamy miejsce w kolejce (strazak)
     if (sem_id != -1 && sem_num != -1) {
-        int val = semctl(sem_id, sem_num, GETVAL);
-        //Jesli semafor jest 0 to ktos jest zablokowany
-        if (val == 0) {
-            ZwolnijSemafor(sem_id, sem_num);
-        }
+        ZwolnijSemafor(sem_id, sem_num);
     }
 
     return 0;

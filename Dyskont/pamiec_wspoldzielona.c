@@ -204,17 +204,14 @@ int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_
     return 0;
 }
 
-//Dodaje klienta do tablicy pomijanych (wycofanie z kolejki samoobslugowej)
-//Uzywamy negatywnego id_klienta (-id) zeby odroznic od migracji
+//Dodaje ID do tablicy pomijanych (znajduje wolne miejsce)
 int DodajPomijanego(StanSklepu* stan, int sem_id, int id_klienta) {
     if (!stan) return -1;
-    
-    int zakodowany_id = -id_klienta; //Negatywne ID dla samoobslugowej
-    
+
     ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     for (unsigned int i = 0; i < stan->max_klientow_rownoczesnie; i++) {
         if (stan->pomijani_klienci[i] == 0) {
-            stan->pomijani_klienci[i] = zakodowany_id;
+            stan->pomijani_klienci[i] = id_klienta;
             ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             return 0; //Sukces
         }
@@ -223,16 +220,13 @@ int DodajPomijanego(StanSklepu* stan, int sem_id, int id_klienta) {
     return -1; //Brak miejsca
 }
 
-//Sprawdza czy klient jest pominiety (samoobslugowa) i usuwa go z tablicy
-//Szuka NEGATYWNEGO id_klienta
+//Sprawdza czy ID jest w tablicy i usuwa je
 int CzyPominiety(StanSklepu* stan, int sem_id, int id_klienta) {
     if (!stan) return 0;
-    
-    int zakodowany_id = -id_klienta; //Szukamy negatywnego ID
-    
+
     ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     for (unsigned int i = 0; i < stan->max_klientow_rownoczesnie; i++) {
-        if (stan->pomijani_klienci[i] == zakodowany_id) {
+        if (stan->pomijani_klienci[i] == id_klienta) {
             stan->pomijani_klienci[i] = 0; //Usuwa z tablicy
             ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             return 1; //Znaleziono i usunieto
@@ -240,4 +234,13 @@ int CzyPominiety(StanSklepu* stan, int sem_id, int id_klienta) {
     }
     ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     return 0; //Nie znaleziono
+}
+
+//Aliasy dla kasjera (z ujemnym ID)
+int DodajZmigrowanego(StanSklepu* stan, int sem_id, int id_klienta) {
+    return DodajPomijanego(stan, sem_id, -id_klienta);
+}
+
+int CzyZmigrowany(StanSklepu* stan, int sem_id, int id_klienta) {
+    return CzyPominiety(stan, sem_id, -id_klienta);
 }

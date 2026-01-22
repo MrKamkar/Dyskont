@@ -2,7 +2,29 @@
 #include "pamiec_wspoldzielona.h"
 #include "pamiec_wspoldzielona.h"
 
-//Operacja na semaforze
+//Pobiera systemowy limit wielkosci kolejki (msgmnb) z /proc
+size_t PobierzLimitKolejki(void)
+{
+    char buf[32];
+    size_t limit = 16384;
+
+    int fd = open("/proc/sys/kernel/msgmnb", O_RDONLY);
+    if (fd < 0)
+        return limit;
+
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+
+    if (n > 0) {
+        buf[n] = '\0';
+        limit = strtoul(buf, NULL, 10);
+    }
+
+    return limit;
+}
+
+
+//Wykonuje operacje na semaforach
 static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
     struct sembuf operacja = { sem_num, wartosc, SEM_UNDO };
     
@@ -44,13 +66,30 @@ int InicjalizujSemafory(int max_klientow) {
     
     //Semafor nowego klienta
     wartosci[SEM_NOWY_KLIENT] = 0;
+
+    //Pobieramy systemowy limit msgmnb
+    size_t limit_systemowy = PobierzLimitKolejki();
     
-    //Semafory kolejek komunikatow - inicjalnie 0 (blokada az do zwolnienia miejsca)
-    wartosci[SEM_KOLEJKA_KASA_1] = 0;
-    wartosci[SEM_KOLEJKA_KASA_2] = 0;
-    wartosci[SEM_KOLEJKA_WSPOLNA] = 0;
-    wartosci[SEM_KOLEJKA_SAMO] = 0;
-    wartosci[SEM_KOLEJKA_PRACOWNIK] = 0;
+    //Obliczamy pojemnosc kolejek dla roznych typow komunikatow
+    int poj_samo = (limit_systemowy / sizeof(MsgKasaSamo)) - 1;
+    int poj_stacj = (limit_systemowy / sizeof(MsgKasaStacj)) - 1;
+    int poj_prac = (limit_systemowy / sizeof(MsgPracownik)) - 1;
+    
+    if (poj_samo < 1) poj_samo = 1;
+    if (poj_stacj < 1) poj_stacj = 1;
+    if (poj_prac < 1) poj_prac = 1;
+    
+    printf("Limity kolejek z jednym zapasowym miejscem:\n");
+    printf(" - Samoobslugowa (size: %zu): %d komunikatow\n", sizeof(MsgKasaSamo), poj_samo);
+    printf(" - Stacjonarne   (size: %zu): %d komunikatow\n", sizeof(MsgKasaStacj), poj_stacj);
+    printf(" - Pracownik     (size: %zu): %d komunikatow\n", sizeof(MsgPracownik), poj_prac);
+
+    //Semafory kolejek komunikatow
+    wartosci[SEM_KOLEJKA_KASA_1] = poj_stacj;
+    wartosci[SEM_KOLEJKA_KASA_2] = poj_stacj;
+    wartosci[SEM_KOLEJKA_WSPOLNA] = poj_stacj;
+    wartosci[SEM_KOLEJKA_SAMO] = poj_samo;
+    wartosci[SEM_KOLEJKA_PRACOWNIK] = poj_prac;
     
     //Semafor wpuszczajacy klientow (Max klientow w sklepie)
     if (max_klientow > 0) wartosci[SEM_WEJSCIE_DO_SKLEPU] = (unsigned short)max_klientow;

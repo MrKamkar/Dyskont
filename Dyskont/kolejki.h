@@ -32,7 +32,7 @@ int OdbierzKomunikat(int msg_id, void* msg, size_t size, long typ, int flagi, in
 //Odbiera komunikat bez sygnalizacji semafora
 int OdbierzKomunikatVIP(int msg_id, void* msg, size_t size, long typ, int flagi);
 
-//Zwraca liczbe komunikatow lub -1 w przypadku bledu
+//Zwraca ilosc komunikatow w kolejce lub -1 w przypadku bledu
 int PobierzRozmiarKolejki(int msg_id);
 
 //Wysylij komunikat bez blokowania semafora

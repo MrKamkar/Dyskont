@@ -9,7 +9,7 @@
 #define SZANSA_BLOKADY 20
 
 //Czas skanowania jednego produktu (samoobsluga)
-#define CZAS_SKANOWANIA_PRODUKTU_MS 1500
+#define CZAS_SKANOWANIA_PRODUKTU_MS 150000
 
 //Funkcje zarzadzania kasami samoobslugowymi
 int ZajmijKase(int id_kasy, int id_klienta, StanSklepu* stan, int sem_id);

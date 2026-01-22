@@ -191,4 +191,8 @@ int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_
 int DodajPomijanego(StanSklepu* stan, int sem_id, int id_klienta);
 int CzyPominiety(StanSklepu* stan, int sem_id, int id_klienta);
 
+//Aliasy dla kasjera (z ujemnym ID)
+int DodajZmigrowanego(StanSklepu* stan, int sem_id, int id_klienta);
+int CzyZmigrowany(StanSklepu* stan, int sem_id, int id_klienta);
+
 #endif

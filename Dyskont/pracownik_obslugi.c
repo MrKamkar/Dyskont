@@ -69,7 +69,7 @@ int main() {
     sigaction(SIGQUIT, &sa_sigterm, NULL);
     sigaction(SIGINT, &sa_sigterm, NULL);
     
-    ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na MSGQ...");
+    ZapiszLog(LOG_INFO, "Pracownik obslugi: Proces uruchomiony, nasluchuje na MSGQ..");
     
     //Dolaczanie do kolejki komunikatow
     int msg_id = PobierzIdKolejki(ID_IPC_PRACOWNIK);

@@ -69,7 +69,7 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, unsigned int liczba_
                      stan->kasy_samoobslugowe[id_kasy].stan = KASA_ZAJETA;
                      ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 }
-                ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Odblokowana.", id_kasy + 1);
+                ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Odblokowana", id_kasy + 1);
             } else {
                  ZapiszLogF(LOG_BLAD, "Kasa samoobslugowa [%d]: Brak odpowiedzi!", id_kasy + 1);
                  ZwolnijKase(id_kasy, stan, sem_id);
@@ -80,7 +80,7 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, unsigned int liczba_
     
     //Weryfikacja wieku przy alkoholu
     if (ma_alkohol) {
-        ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Weryfikacja wieku...", id_kasy + 1);
+        ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Weryfikacja wieku..", id_kasy + 1);
         
         int wynik = WyslijZadanieObslugi(id_kasy, OP_WERYFIKACJA_WIEKU, wiek, sem_id);
         
@@ -92,7 +92,7 @@ int ObsluzKlientaSamoobslugowo(int id_kasy, int id_klienta, unsigned int liczba_
         }
     }
     
-    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Klient [%d] zaplacil %.2f PLN.", id_kasy + 1, id_klienta, suma);
+    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Klient [%d] zaplacil %.2f PLN", id_kasy + 1, id_klienta, suma);
     return 0;
 }
 
@@ -111,25 +111,18 @@ static int ObsluzKlienta(int id_kasy) {
     size_t msg_size = sizeof(MsgKasaSamo) - sizeof(long);
 
     //Debug: Oczekiwanie
-    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Czekam na klienta..", id_kasy + 1);
+    ZapiszLogF(LOG_DEBUG, "Kasa samoobslugowa [%d]: Czekam na klienta..", id_kasy + 1);
 
-    //Uzywamy wersji bez automatycznej sygnalizacji semafora
-    int res = OdbierzKomunikat(g_msg_id, &msg, msg_size, MSG_TYPE_SAMOOBSLUGA, 0, g_sem_id, SEM_KOLEJKA_SAMO);
+    //Odbieranie komunikatu bez zwalniania semafora
+    int res = OdbierzKomunikat(g_msg_id, &msg, msg_size, MSG_TYPE_SAMOOBSLUGA, 0, -1, -1);
 
-    if (g_msg_id != PobierzIdKolejki(ID_IPC_SAMO)) printf("g_msg_id: %d\n", g_msg_id);
-
-    int val_sem = semctl(g_sem_id, SEM_KOLEJKA_SAMO, GETVAL);
-    ZapiszLogF(LOG_BLAD, "NieOdebralem. Semafor SEM_KOLEJKA_SAMO: %d", val_sem);
+    //Jesli pomyslnie odebrano wiadomosc, zwolnij miejsce w kolejce jesli ktos czeka
     if (res != -1) {
-        
-        ZapiszLogF(LOG_BLAD, "Odebralem. Semafor SEM_KOLEJKA_SAMO: %d", val_sem);
-        //Sprawdzenie czy klient wycofal sie do kasy stacjonarnej
+
+        //Sprawdzenie, czy klient przeszedl do kasy stacjonarnej
         if (CzyPominiety(g_stan_sklepu, g_sem_id, msg.id_klienta)) {
-            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Pomijam klienta [ID: %d] - wycofal sie.", id_kasy + 1, msg.id_klienta);
-             if (semctl(g_sem_id, SEM_KOLEJKA_SAMO, GETVAL) == 0) {
-                ZwolnijSemafor(g_sem_id, SEM_KOLEJKA_SAMO); 
-             }
-            return 1; //Pomiń i kontynuuj
+            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Pomijam klienta [ID: %d] - przeszedl do kasy stacjonarnej", id_kasy + 1, msg.id_klienta);
+            return 1;
         }
 
         ZajmijKase(id_kasy, msg.id_klienta, g_stan_sklepu, g_sem_id);
@@ -142,15 +135,9 @@ static int ObsluzKlienta(int id_kasy) {
         res_msg.liczba_produktow = id_kasy;
         
         WyslijKomunikatVIP(g_msg_id, &res_msg, msg_size);
-        
-        //Zwolnij semafor bo odbralismy miejsce - tylko jesli 0 (ktos czeka)
-        if (semctl(g_sem_id, SEM_KOLEJKA_SAMO, GETVAL) == 0) {
-            ZwolnijSemafor(g_sem_id, SEM_KOLEJKA_SAMO);
-        }
-
         ZwolnijKase(id_kasy, g_stan_sklepu, g_sem_id);
-
         return 1;
+
     } else {
         return (errno == EINTR) ? -1 : -2;
     }
@@ -159,12 +146,12 @@ static int ObsluzKlienta(int id_kasy) {
 //Logika procesu potomnego (kasy 1-5)
 static void LogikaKasyPotomnej(int id_kasy) {
     srand(time(NULL) ^ getpid());
-    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Uruchomiona (PID: %d).", id_kasy + 1, getpid());
+    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Uruchomiona (PID: %d)", id_kasy + 1, getpid());
 
     int wynik;
     while ((wynik = ObsluzKlienta(id_kasy)) > 0);
     
-    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Zakonczona.", id_kasy + 1);
+    ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Zakonczona", id_kasy + 1);
 }
 
 //Uruchomienie nowej kasy (fork)
@@ -228,9 +215,9 @@ static void* WatekSkalujacy(void* arg) {
         //Zbieranie zombie (zakonczonych procesow potomnych)
         int status;
         pid_t pid = waitpid(-1, &status, WNOHANG);
-        if (pid > 0) {
-            pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL); //Wylaczamy cancel
+        if (pid > 0) { //Ktos lub cos zabilo proces potomny recznie
 
+            pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
             ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             for (int i = 1; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
                 if (g_stan_sklepu->kasy_samoobslugowe[i].pid == pid) {
@@ -240,8 +227,7 @@ static void* WatekSkalujacy(void* arg) {
                 }
             }
             ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-
-            pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL); //Wlaczamy cancel
+            pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
         }
         
         //Czekamy na sygnal nowego klienta
@@ -263,8 +249,7 @@ static void* WatekSkalujacy(void* arg) {
         while (aktywne < wymagane && aktywne < LICZBA_KAS_SAMOOBSLUGOWYCH) {
             int wolny_slot = -1;
             
-            pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL); //Wylaczamy cancel
-
+            pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
             ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             for (int i = 1; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
                 if (g_stan_sklepu->kasy_samoobslugowe[i].stan == KASA_ZAMKNIETA) {
@@ -273,8 +258,7 @@ static void* WatekSkalujacy(void* arg) {
                 }
             }
             ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-            
-            pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL); //Wlaczamy cancel
+            pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
             
             if (wolny_slot != -1) {
                 if (UruchomKase(wolny_slot) > 0) aktywne++;
@@ -287,7 +271,7 @@ static void* WatekSkalujacy(void* arg) {
             unsigned int prog = KLIENCI_NA_KASE * (aktywne - MIN_KAS_SAMO_CZYNNYCH);
 
             if (liczba_klientow < prog) {
-                //Zamykamy od konca (kasy 5,4,3...)
+                //Zamykamy od konca (w zadaniu moze byc to tylko kasa 5 lub 4)
                 for (int i = LICZBA_KAS_SAMOOBSLUGOWYCH - 1; i >= 1; i--) {
                     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
                     ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
@@ -376,7 +360,7 @@ int main(int argc, char* argv[]) {
     g_stan_sklepu->liczba_czynnych_kas_samoobslugowych = 1;
     ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 
-    //Uruchomienie poczatkowych kas 1 i 2 (razem z 0 = 3 poczatkowe)
+    //Uruchomienie poczatkowych kas 1 i 2 (razem 3 poczatkowe)
     for (int i = 1; i < MIN_KAS_SAMO_CZYNNYCH; i++) {
         UruchomKase(i);
     }
