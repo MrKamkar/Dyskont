@@ -6,7 +6,7 @@
 #include "pamiec_wspoldzielona.h"
 
 //Czas skasowania jednego produktu
-#define CZAS_SKASOWANIA_PRODUKTU_MS 100000
+#define CZAS_SKASOWANIA_PRODUKTU_MS 1500
 
 //Timeout bezczynnosci - kasa zamyka sie po 30s bez klienta
 #define TIMEOUT_BEZCZYNNOSCI_S 30

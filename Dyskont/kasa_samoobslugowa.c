@@ -105,6 +105,25 @@ static int g_msg_id = -1;
 static int g_czy_rodzic = 1; //Domyslnie jestesmy rodzicem
 static pthread_t g_watek_skalujacy;
 
+//Flagi dla bezpiecznego zamykania
+static volatile sig_atomic_t g_kasa_zajeta = 0;
+static volatile sig_atomic_t g_zamkniecie_oczekujace = 0;
+
+//Obsluga SIGUSR1 - Lagodne zamykanie przy skalowaniu
+static void ObslugaSIGUSR1(int sig) {
+    (void)sig;
+    
+    //Jesli kasa pracuje, ustawiamy flage oczekujaca
+    if (g_kasa_zajeta) {
+        g_zamkniecie_oczekujace = 1;
+        ZapiszLogF(LOG_DEBUG, "Kasa [PID: %d] otrzymala rozkaz zamkniecia - dokanczam obsluge klienta", getpid());
+    } else {
+        //Jesli wolna, konczymy od razu
+        if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
+        exit(0);
+    }
+}
+
 //Obsługa jednego klienta 
 static int ObsluzKlienta(int id_kasy) {
     MsgKasaSamo msg;
@@ -118,14 +137,18 @@ static int ObsluzKlienta(int id_kasy) {
 
     //Jesli pomyslnie odebrano wiadomosc, zwolnij miejsce w kolejce jesli ktos czeka
     if (res != -1) {
+        g_kasa_zajeta = 1;
 
-        //Sprawdzenie, czy klient przeszedl do kasy stacjonarnej
+        //Natychmiastowe zajecie kasy (blokuje przeniesienie klienta)
+        ZajmijKase(id_kasy, msg.id_klienta, g_stan_sklepu, g_sem_id);
+
+        //Sprawdzenie czy klient nie zrezygnowal tuz przed zajeciem
         if (CzyPominiety(g_stan_sklepu, g_sem_id, msg.id_klienta)) {
-            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Pomijam klienta [ID: %d] - przeszedl do kasy stacjonarnej", id_kasy + 1, msg.id_klienta);
+            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Pomijam klienta [ID: %d] - wycofal sie", id_kasy + 1, msg.id_klienta);
+            ZwolnijKase(id_kasy, g_stan_sklepu, g_sem_id);
+            g_kasa_zajeta = 0;
             return 1;
         }
-
-        ZajmijKase(id_kasy, msg.id_klienta, g_stan_sklepu, g_sem_id);
 
         int wynik = ObsluzKlientaSamoobslugowo(id_kasy, msg.id_klienta, msg.liczba_produktow, msg.suma_koszyka, msg.ma_alkohol, msg.wiek, g_stan_sklepu, g_sem_id);
 
@@ -134,11 +157,25 @@ static int ObsluzKlienta(int id_kasy) {
         res_msg.id_klienta = wynik;
         res_msg.liczba_produktow = id_kasy;
         
-        WyslijKomunikatVIP(g_msg_id, &res_msg, msg_size);
+        //Wyslanie odpowiedzi jesli klient nadal czeka
+        if (!CzyPominiety(g_stan_sklepu, g_sem_id, msg.id_klienta)) {
+            WyslijKomunikatVIP(g_msg_id, &res_msg, msg_size);
+        }
+
         ZwolnijKase(id_kasy, g_stan_sklepu, g_sem_id);
+        g_kasa_zajeta = 0; 
+        
+        //Obsluga SIGUSR1 (skalowanie)
+        if (g_zamkniecie_oczekujace) {
+            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Zamykanie po dokonczeniu obslugi", id_kasy + 1);
+            if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
+            exit(0);
+        }
+
         return 1;
 
     } else {
+        if (errno != EINTR) ZapiszLogF(LOG_BLAD, "Kasa %d: Blad msgrcv: %d", id_kasy+1, errno);
         return (errno == EINTR) ? -1 : -2;
     }
 }
@@ -156,7 +193,7 @@ static void LogikaKasyPotomnej(int id_kasy) {
 
 //Uruchomienie nowej kasy (fork)
 static pid_t UruchomKase(int slot) {
-    if (slot < 1 || slot >= LICZBA_KAS_SAMOOBSLUGOWYCH) return -1;
+    if (slot < 0 || slot >= LICZBA_KAS_SAMOOBSLUGOWYCH) return -1;
     
     pid_t pid = fork();
     
@@ -165,6 +202,13 @@ static pid_t UruchomKase(int slot) {
         sigset_t set;
         sigemptyset(&set);
         pthread_sigmask(SIG_SETMASK, &set, NULL);
+        
+        //Rejestracja SIGUSR1 do lagodnego zamykania kasy
+        struct sigaction sa;
+        sa.sa_handler = ObslugaSIGUSR1;
+        sigemptyset(&sa.sa_mask); 
+        sa.sa_flags = 0; 
+        sigaction(SIGUSR1, &sa, NULL);
         
         g_czy_rodzic = 0;
         LogikaKasyPotomnej(slot);
@@ -184,14 +228,19 @@ static pid_t UruchomKase(int slot) {
     return pid;
 }
 
-//Zamkniecie kasy (SIGTERM)
+//Zamkniecie kasy (Skalowanie - SIGUSR1)
 static void ZamknijKase(int slot) {
-    if (slot < 1 || slot >= LICZBA_KAS_SAMOOBSLUGOWYCH) return;
+    if (slot < 0 || slot >= LICZBA_KAS_SAMOOBSLUGOWYCH) return;
     
     ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     pid_t pid = g_stan_sklepu->kasy_samoobslugowe[slot].pid;
     if (pid > 0) {
-        kill(pid, SIGTERM);
+        kill(pid, SIGUSR1); //Wysylamy prosbe o lagodne zamkniecie
+        
+        //Czekamy az kasa skonczy obsluge i wyjdzie
+        int status;
+        waitpid(pid, &status, 0); 
+        
         g_stan_sklepu->kasy_samoobslugowe[slot].stan = KASA_ZAMKNIETA;
         g_stan_sklepu->kasy_samoobslugowe[slot].pid = 0;
         if (g_stan_sklepu->liczba_czynnych_kas_samoobslugowych > 0) {
@@ -219,10 +268,13 @@ static void* WatekSkalujacy(void* arg) {
 
             pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
             ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-            for (int i = 1; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
+            for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
                 if (g_stan_sklepu->kasy_samoobslugowe[i].pid == pid) {
                     g_stan_sklepu->kasy_samoobslugowe[i].stan = KASA_ZAMKNIETA;
                     g_stan_sklepu->kasy_samoobslugowe[i].pid = 0;
+                    if (g_stan_sklepu->liczba_czynnych_kas_samoobslugowych > 0) {
+                        g_stan_sklepu->liczba_czynnych_kas_samoobslugowych--;
+                    }
                     break;
                 }
             }
@@ -251,7 +303,7 @@ static void* WatekSkalujacy(void* arg) {
             
             pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
             ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-            for (int i = 1; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
+            for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
                 if (g_stan_sklepu->kasy_samoobslugowe[i].stan == KASA_ZAMKNIETA) {
                     wolny_slot = i;
                     break;
@@ -271,14 +323,16 @@ static void* WatekSkalujacy(void* arg) {
             unsigned int prog = KLIENCI_NA_KASE * (aktywne - MIN_KAS_SAMO_CZYNNYCH);
 
             if (liczba_klientow < prog) {
-                //Zamykamy od konca (w zadaniu moze byc to tylko kasa 5 lub 4)
-                for (int i = LICZBA_KAS_SAMOOBSLUGOWYCH - 1; i >= 1; i--) {
+                //Zamykamy od konca
+                for (int i = LICZBA_KAS_SAMOOBSLUGOWYCH - 1; i > 0; i--) {
                     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
                     ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                    int aktywna = (g_stan_sklepu->kasy_samoobslugowe[i].stan != KASA_ZAMKNIETA);
+
+                    //Mozna zamknac tylko kase ktora jest WOLNA
+                    int mozna_zamknac = (g_stan_sklepu->kasy_samoobslugowe[i].stan == KASA_WOLNA);
                     ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                     
-                    if (aktywna) {
+                    if (mozna_zamknac) {
                         ZamknijKase(i);
                         pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
                         break;

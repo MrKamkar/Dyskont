@@ -60,6 +60,9 @@ int main() {
     }
     g_stan_sklepu_pracownik = stan_sklepu;
     
+    //Ustawienie grupy procesow (odlaczenie od terminala Ctrl+Z)
+    setpgid(0, 0);
+
     //Obsluga sygnalow wyjscia
     struct sigaction sa_sigterm;
     sa_sigterm.sa_handler = ObslugaSIGTERM;

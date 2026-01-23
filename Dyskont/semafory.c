@@ -1,6 +1,8 @@
 #include "semafory.h"
 #include "pamiec_wspoldzielona.h"
 #include "pamiec_wspoldzielona.h"
+#include <fcntl.h>
+#include <unistd.h>
 
 //Pobiera systemowy limit wielkosci kolejki (msgmnb) z /proc
 size_t PobierzLimitKolejki(void)
@@ -26,7 +28,17 @@ size_t PobierzLimitKolejki(void)
 
 //Wykonuje operacje na semaforach
 static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
-    struct sembuf operacja = { sem_num, wartosc, SEM_UNDO };
+    short flagi = 0;
+    //Uzywamy SEM_UNDO tylko dla Mutexow oraz semaforow "symetrycznych" (P i V w tym samym procesie)
+    //Dzieki temu, jesli proces klienta zginie, zasoby zostana zwolnione
+    if (sem_num == MUTEX_PAMIEC_WSPOLDZIELONA || 
+        sem_num == MUTEX_KOLEJKI_VIP ||
+        sem_num == SEM_WEJSCIE_DO_SKLEPU ||
+        sem_num == SEM_KOLEJKA_SAMO) {
+        flagi = SEM_UNDO;
+    }
+    
+    struct sembuf operacja = { sem_num, wartosc, flagi };
     
     while (1) {
         if (semop(sem_id, &operacja, 1) == 0) return 0;

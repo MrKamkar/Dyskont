@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -12,6 +13,22 @@
 #include "pamiec_wspoldzielona.h"
 #include "kolejki.h"
 #include "kasjer.h"
+
+//Sprawdza limity systemowe
+static void SprawdzLimitySystemowe(int wymagane_procesy) {
+    struct rlimit lim;
+    if (getrlimit(RLIMIT_NPROC, &lim) == 0) {
+        if (lim.rlim_cur != RLIM_INFINITY && lim.rlim_cur < (rlim_t)wymagane_procesy + 50) {
+            fprintf(stderr, "\n[BLAD KRYTYCZNY] Limit procesow uzytkownika (%lu) jest zbyt maly!\n", (unsigned long)lim.rlim_cur);
+            fprintf(stderr, "Symulacja wymaga uruchomienia okolo %d klientow.\n", wymagane_procesy);
+            fprintf(stderr, "Zwieksz limit (ulimit -u) lub zmniejsz liczbe klientow.\n\n");
+            exit(1);
+        } else {
+            printf("[INFO] Limit procesow: %lu (Wymagane: ~%d) - OK\n", 
+                (lim.rlim_cur == RLIM_INFINITY) ? 1000000 : (unsigned long)lim.rlim_cur, wymagane_procesy);
+        }
+    }
+}
 
 //Globalne zmienne
 static StanSklepu* g_stan_sklepu = NULL; //Wskaznik do pamieci wspoldzielonej
@@ -194,6 +211,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    //Weryfikacja limitow systemowych
+    SprawdzLimitySystemowe(pula_klientow);
 
     //Obsluga sygnalow
     signal(SIGINT, ObslugaSIGTERM);    //Ctrl+C
@@ -271,10 +290,9 @@ int main(int argc, char* argv[]) {
         kill(getppid(), SIGTERM);
         _exit(1);
     }
-    else {
-        //Przekazanie informacji o poprawnym uruchomieniu procesu managera kas stacjonarnych
-        ZapiszLogF(LOG_INFO, "Uruchomiono proces managera kas stacjonarnych [PID: %d]", g_pid_manager_kasjerow);
-    }
+    //Przekazanie informacji o poprawnym uruchomieniu procesu managera kas stacjonarnych
+    else ZapiszLogF(LOG_INFO, "Uruchomiono proces managera kas stacjonarnych [PID: %d]", g_pid_manager_kasjerow);
+
 
     //URUCHOMIENIE MANAGERA KAS SAMOOBSLUGOWYCH
     g_pid_manager_samoobslugowych = fork();
@@ -292,10 +310,8 @@ int main(int argc, char* argv[]) {
         kill(getppid(), SIGTERM);
         _exit(1);
     }
-    else {
-        //Przekazanie informacji o poprawnym uruchomieniu procesu managera kas samoobslugowych
-        ZapiszLogF(LOG_INFO, "Uruchomiono proces managera kas samoobslugowych [PID: %d]", g_pid_manager_samoobslugowych);
-    }
+    //Przekazanie informacji o poprawnym uruchomieniu procesu managera kas samoobslugowych
+    else ZapiszLogF(LOG_INFO, "Uruchomiono proces managera kas samoobslugowych [PID: %d]", g_pid_manager_samoobslugowych);
 
     //URUCHOMIENIE PROCESU PRACOWNIKA OBSLUGI
     ZapiszLog(LOG_INFO, "Uruchamianie procesu pracownika obslugi..");
@@ -316,10 +332,8 @@ int main(int argc, char* argv[]) {
         kill(getppid(), SIGTERM);
         _exit(1);
     }
-    else {
-        //Przekazanie informacji o poprawnym uruchomieniu procesu pracownika obslugi
-        ZapiszLogF(LOG_INFO, "Uruchomiono proces pracownika obslugi [PID: %d]", g_pid_pracownika);
-    }
+    //Przekazanie informacji o poprawnym uruchomieniu procesu pracownika obslugi
+    else ZapiszLogF(LOG_INFO, "Uruchomiono proces pracownika obslugi [PID: %d]", g_pid_pracownika);
 
     //URUCHOMIENIE PROCESU GENERATORA KLIENCIOW
     g_pid_generatora_klientow = fork();
@@ -340,10 +354,8 @@ int main(int argc, char* argv[]) {
         kill(getppid(), SIGTERM);
         _exit(1);
     }
-    else {
-        //Przekazanie informacji o poprawnym uruchomieniu procesu generatora klientow
-        ZapiszLogF(LOG_INFO, "Uruchomiono proces generatora klientow [PID: %d]", g_pid_generatora_klientow);
-    }
+    //Przekazanie informacji o poprawnym uruchomieniu procesu generatora klientow
+    else ZapiszLogF(LOG_INFO, "Uruchomiono proces generatora klientow [PID: %d]", g_pid_generatora_klientow);
 
     //Glowna petla oczekiwania na zakonczenie procesow potomnych
     pid_t pid_wait;
@@ -357,11 +369,7 @@ int main(int argc, char* argv[]) {
                 ZapiszLogF(LOG_INFO, "Proces potomny [PID: %d] zostal zabity sygnalem %d", pid_wait, WTERMSIG(status));
             }
         }
-        else {
-            if (errno == ECHILD) {
-                break;
-            }
-        }
+        else if (errno == ECHILD) break;
     }
 
     printf("=== Koniec symulacji ===\n");

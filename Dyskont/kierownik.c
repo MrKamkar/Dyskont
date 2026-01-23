@@ -40,16 +40,14 @@ static void PokazStatusKolejek() {
     unsigned int kasy_samo_czynne = g_stan_sklepu->liczba_czynnych_kas_samoobslugowych;
     ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
 
-    printf("\n--- STATUS KOLEJEK (msgctl)---\n");
+    printf("\n--- STATUS KOLEJEK ---\n");
     
-    //Wspolna kolejka wyswietlana tylko gdy obie kasy zamkniete
-    int obie_zamkniete = (stan_kasy_1 == KASA_ZAMKNIETA) && (stan_kasy_2 == KASA_ZAMKNIETA);
-    if (obie_zamkniete) {
-        printf("  Kolejka do kas stacjonarnych: %d osob\n", PobierzRozmiarKolejki(msg_id_wspolna));
-    } else {
-        printf("  Kasa stacjonarna 1: %d osob\n", PobierzRozmiarKolejki(msg_id_1));
-        printf("  Kasa stacjonarna 2: %d osob\n", PobierzRozmiarKolejki(msg_id_2));
-    }
+    //Wspolna kolejka wyswietlana zawsze
+    printf("  Wspolna kolejka do kas stacjonarnych: %d osob\n", PobierzRozmiarKolejki(msg_id_wspolna));
+    
+    //Kolejki do kas
+    printf("  Kolejka Kasa 1: %d osob\n", PobierzRozmiarKolejki(msg_id_1));
+    printf("  Kolejka Kasa 2: %d osob\n", PobierzRozmiarKolejki(msg_id_2));
     printf("  Kasy samoobslugowe: %d osob\n", PobierzRozmiarKolejki(msg_id_samo));
     
     //Status kas
@@ -60,7 +58,6 @@ static void PokazStatusKolejek() {
     const char* nazwy_stanow[] = {"ZAMKNIETA", "WOLNA", "ZAJETA", "ZAMYKANA"};
     printf("  Kasa stacjonarna 1: %s\n", nazwy_stanow[stan_kasy_1]);
     printf("  Kasa stacjonarna 2: %s\n", nazwy_stanow[stan_kasy_2]);
-    
     printf("-------------------------------\n");
 }
 
@@ -129,11 +126,8 @@ int main() {
                 
             case 1:
                 //SIGUSR1 - otwieranie kasy 2
-                if (kill(pid_glowny, SIGUSR1) == 0) {
-                    printf("Wyslano SIGUSR1 - otwieranie kasy 2\n");
-                } else {
-                    perror("Blad wysylania SIGUSR1");
-                }
+                if (kill(pid_glowny, SIGUSR1) == 0) printf("Wyslano SIGUSR1 - otwieranie kasy 2\n");
+                else perror("Blad wysylania SIGUSR1");
                 break;
                 
             case 2:
@@ -142,11 +136,8 @@ int main() {
                 g_stan_sklepu->id_kasy_do_zamkniecia = 0;
                 ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
                 
-                if (kill(pid_glowny, SIGUSR2) == 0) {
-                    printf("Wyslano SIGUSR2 - zamykanie kasy 1\n");
-                } else {
-                    perror("Blad wysylania SIGUSR2");
-                }
+                if (kill(pid_glowny, SIGUSR2) == 0) printf("Wyslano SIGUSR2 - zamykanie kasy 1\n");
+                else perror("Blad wysylania SIGUSR2");
                 break;
                 
             case 3:
@@ -155,7 +146,9 @@ int main() {
                 g_stan_sklepu->id_kasy_do_zamkniecia = 1;
                 g_stan_sklepu->polecenie_kierownika = POLECENIE_ZAMKNIJ_KASE;
                 ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-                printf("Wyslano polecenie zamkniecia kasy 2\n");
+                
+                if (kill(pid_glowny, SIGUSR2) == 0) printf("Wyslano SIGUSR2 - zamykanie kasy 2\n");
+                else perror("Blad wysylania SIGUSR2");
                 break;
                 
             case 4:
@@ -165,12 +158,9 @@ int main() {
                     if (kill(pid_glowny, SIGTERM) == 0) {
                         printf("Wyslano SIGTERM - EWAKUACJA!\n");
                         dzialaj = 0;
-                    } else {
-                        perror("Blad wysylania SIGTERM");
-                    }
-                } else {
-                    printf("Anulowano.\n");
-                }
+                    } else perror("Blad wysylania SIGTERM");
+                    
+                } else printf("Anulowano.\n");
                 break;
                 
             case 5:

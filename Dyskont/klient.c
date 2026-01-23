@@ -354,8 +354,8 @@ int main(int argc, char* argv[]) {
                     int id_kasy_samo = -1;
                     if (WyslijKomunikat(msg_id_samo, &msg, sizeof(MsgKasaSamo) - sizeof(long), g_sem_id, SEM_KOLEJKA_SAMO) == 0) {
                         
-                        //Czekamy na odpowiedz blokujaco
-                        ZapiszLogF(LOG_DEBUG, "Klient [ID: %d] czekam na odpowiedz od kasy samoobslugowej..", klient->id);
+                        //Czekanie na odpowiedz blokujaco
+                        ZapiszLogF(LOG_DEBUG, "Klient [ID: %d] czeka na odpowiedz od kasy samoobslugowej..", klient->id);
                         MsgKasaSamo res;
                         int wynik = OdbierzKomunikat(msg_id_samo, &res, sizeof(MsgKasaSamo) - sizeof(long), MSG_RES_SAMOOBSLUGA_BASE + klient->id, 0, g_sem_id, SEM_KOLEJKA_SAMO);
                         
