@@ -46,7 +46,7 @@ void UsunKolejke(int msg_id) {
 int WyslijKomunikat(int msg_id, void* msg, size_t size, int sem_id, int sem_num) {
     if (msg_id == -1 || !msg) return -1;
     
-    //Wersja ze "strazakiem" - semafor liczy wolne miejsca w kolejce
+    //Wersja ze "straznikiem" - semafor liczy wolne miejsca w kolejce
     if (sem_id != -1 && sem_num != -1) {
         if (ZajmijSemafor(sem_id, sem_num) == -1) return -1;
     }
@@ -70,7 +70,7 @@ int OdbierzKomunikat(int msg_id, void* msg, size_t size, long typ, int flagi, in
         return -1;
     }
 
-    //Zwalniamy miejsce w kolejce (strazak)
+    //Zwalniamy miejsce w kolejce
     if (sem_id != -1 && sem_num != -1) {
         ZwolnijSemafor(sem_id, sem_num);
     }

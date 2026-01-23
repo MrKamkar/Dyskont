@@ -76,23 +76,25 @@ Szczegółowe wymagania dotyczące realizacji projektu znajdują się w pliku: h
 
 Projekt został podzielony na moduły funkcjonalne:
 
-- **main.c**: Główny proces zarządczy. Inicjalizuje zasoby IPC, a następnie uruchamia procesy-managery: **Manager Kas Stacjonarnych** (`kasjer`), **Manager Kas Samoobsługowych** (`kasa_samoobslugowa`), **Pracownik Obsługi** oraz **Generator Klientów** (`klient`). Obsługuje sygnały systemowe i zarządza czyszczeniem zasobów.
+- **main.c**: Główny proces zarządczy. Inicjalizuje zasoby IPC, a następnie uruchamia procesy-managery. Obsługuje sygnały systemowe i w przypadku ewakuacji uruchamia osobny **wątek sprzątający** (`WatekSprzatajacy`), który asynchronicznie zamyka procesy potomne, pozwalając procesowi głównemu na finalne zwolnienie zasobów IPC po zakończeniu wszystkich dzieci.
 
-- **pamiec_wspoldzielona.c / .h**: Zawiera definicję struktury `StanSklepu` oraz funkcje zarządzające segmentem pamięci współdzielonej.
+- **pamiec_wspoldzielona.c / .h**: Zawiera definicję struktury `StanSklepu` oraz funkcje zarządzające segmentem pamięci współdzielonej. Przechowuje ona tablicę statusów kas, liczniki klientów, flagi ewakuacji oraz magazyn produktów, umożliwiając wszystkim procesom dostęp do wspólnego stanu symulacji w czasie rzeczywistym.
 
-- **semafory.c / .h**: Biblioteka pomocnicza do operacji na semaforach Systemu V.
+- **semafory.c / .h**: Biblioteka do operacji na semaforach Systemu V. Implementuje między innymi semafory zliczające wolne miejsca w kolejkach komunikatów, co zapobiega systemowemu blokowaniu procesów przy przepełnieniu buforów kernela.
 
-- **logi.c / .h**: Wątek logujący działający w procesie głównym, odbierający komunikaty z kolejki i zapisujący je do pliku.
+- **logi.c / .h**: System logowania oparty na dedykowanym wątku i kolejce komunikatów. Procesy przesyłają logi do kolejki, a wątek loggera (działający w procesie głównym) odbiera je, formatuje z użyciem kolorów ANSI i zapisuje do rotowanego pliku w katalogu `logs/`.
 
-- **klient.c / .h**: Proces pełniący rolę **Generatora Klientów**. W pętli tworzy procesy potomne (właściwych klientów). Każdy klient realizuje symulację zakupów, a w przypadku oczekiwania w kolejce do kasy samoobsługowej uruchamia osobny **wątek sprawdzający** (`WatekSprawdzajacyKase`), który monitoruje dostępność kas stacjonarnych i umożliwia migrację.
+- **klient.c / .h**: Proces **Generatora Klientów**, który w pętli `fork`-uje właściwe procesy klientów. Każdy klient jest autonomicznym procesem. Klienci oczekujący w kolejce do kasy samoobsługowej uruchamiają pomocniczy **wątek sprawdzający**, który po czasie `T` monitoruje dostępność kas stacjonarnych i umożliwia migrację, jeśli te są wolne.
 
-- **kasjer.c / .h**: Proces **Manager Kas Stacjonarnych**. Główny wątek obsługuje Kasę 1, natomiast dodatkowy **Wątek Zarządzający** monitoruje wspólną kolejkę (`ID_IPC_KASA_WSPOLNA`) i rozdziela klientów do kolejek prywatnych (`ID_IPC_KASA_1`, `ID_IPC_KASA_2`). W razie potrzeby forkuje proces dla Kasy 2.
+- **kasjer.c / .h**: Proces **Managera Kas Stacjonarnych**. Obsługuje Kasę 1 bezpośrednio, a w razie zapotrzebowania `fork`-uje proces Kasy 2. Posiada **wątek zarządzający**, który monitoruje wspólną kolejkę wejściową i rozdziela klientów do kolejek prywatnych konkretnych kas na podstawie ich długości i stanu.
 
-- **kasa_samoobslugowa.c / .h**: Proces **Manager Kas Samoobsługowych**. Działa jako Kasa 0 i zarządza pulą procesów podrzędnych (Kasy 1-5) poprzez **wątek skalujący**, który dynamicznie dostosowuje liczbę aktywnych kas do liczby klientów.
+- **kasa_samoobslugowa.c / .h**: Proces **Managera Kas Samoobsługowych**. Zarządza pulą procesów-robotów (Kasy 1-5). Posiada **wątek skalujący**, który dynamicznie tworzy nowe kasy (fork) lub wysyła sygnał `SIGUSR1` do istniejących w celu ich łagodnego zamknięcia, bazując na liczbie klientów w sklepie.
 
-- **kierownik.c / .h**: Panel sterowania dla użytkownika. Umożliwia wysyłanie poleceń do procesu głównego (otwarcie/zamknięcie kas, ewakuacja).
+- **pracownik_obslugi.c / .h**: Proces **Pracownika**, który nasłuchuje na dedykowanej kolejce zadań. Odpowiada za losowe odblokowywanie zaciętych kas samoobsługowych oraz weryfikację wieku klientów kupujących alkohol (na podstawie wieku przekazanego w komunikacie).
 
-- **kolejki.c / .h**: Biblioteka obsługująca IPC Message Queues. Implementuje funkcje `PobierzIdKolejki`, `WyslijKomunikat` (z blokadą semafora) oraz `WyslijKomunikatVIP` (dla odpowiedzi).
+- **kierownik.c / .h**: Interaktywny panel sterowania. Pozwala użytkownikowi na ręczne wysyłanie sygnałów `SIGUSR1/SIGUSR2` do procesu głównego (sterowanie kasami) oraz `SIGTERM` (ewakuacja).
+
+- **kolejki.c / .h**: Warstwa abstrakcji nad IPC Message Queues. Implementuje bezpieczne wysyłanie komunikatów z użyciem semaforów oraz mechanizm **VIP (odpowiedzi)**, który gwarantuje dostarczenie komunikatu zwrotnego do klienta nawet przy pełnych kolejkach wejściowych.
 
 ### 3. Co udało się zrealizować?
 
@@ -321,50 +323,52 @@ _Zrzut 2: Potwierdzenie czystego środowiska (brak wiszących zasobów IPC) po z
 
 ## 8. Linki do kodu (Wymagane funkcje systemowe)
 
-Poniżej znajdują się odniesienia do kluczowych mechanizmów systemowych wykorzystanych w projekcie:
+Poniżej znajdują się odniesienia do kluczowych mechanizmów systemowych wykorzystanych w projekcie (linki wskazują na konkretny commit `12eb908`):
 
 **a. Tworzenie i obsługa plików (`open`, `close`, `write`)**
 
-- `open` (otwarcie pliku logów): [logi.c:37](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L37)
-- `write` (zapis do logu): [logi.c:103](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L103)
-- `close` (zamknięcie pliku): [logi.c:109](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L109)
+- `open` (otwarcie pliku logów): [logi.c:30-41](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L30-L41)
+- `read` (odczyt z pliku/urządzenia): [semafory.c:17-18](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/semafory.c#L17-L18)
+- `write` (zapis do logu): [logi.c:101-105](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L101-L105)
+- `close` (zamknięcie pliku): [logi.c:109](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L109)
 
 **b. Tworzenie procesów (`fork`, `exec`, `exit`, `wait`)**
 
-- `fork` (tworzenie procesu kasjera): [main.c:276](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L276)
-- `exec` (`execl` - nadpisanie obrazu procesu): [main.c:287](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L287)
-- `exit` (`_exit` - zakończenie procesu potomnego): [main.c:291](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L291)
-- `wait` (`waitpid` - oczekiwanie na dzieci): [main.c:364](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L364)
+- `fork` (tworzenie procesu generatora klientów): [main.c:339-345](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L339-L345)
+- `exec` (`execl` - nadpisanie obrazu procesu): [main.c:287-291](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L287-L291)
+- `exit` (`_exit` - zakończenie procesu potomnego): [main.c:291](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L291)
+- `wait` (`waitpid` - oczekiwanie na dzieci): [main.c:364-370](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L364-L370)
 
 **c. Tworzenie i obsługa wątków (`pthread_create`, `pthread_join`, `pthread_exit`)**
 
-- `pthread_create` (utworzenie wątku loggera): [logi.c:130](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L130)
-- `pthread_join` (oczekiwanie na wątek sprzątający): [main.c:165](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L165)
-- `pthread_exit` (zakończenie wątku): [logi.c:110](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L110)
-- `pthread_sigmask` (blokowanie sygnałów w wątku): [logi.c:21](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L21)
+- `pthread_create` (utworzenie wątku loggera): [logi.c:130-134](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L130-L134)
+- `pthread_join` (oczekiwanie na wątek sprzątający): [main.c:165](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L165)
+- `pthread_exit` (zakończenie wątku): [logi.c:110](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L110)
+- `pthread_sigmask` (blokowanie sygnałów w wątku): [logi.c:20-21](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L20-L21)
 
 **d. Obsługa sygnałów (`kill`, `signal`, `sigaction`)**
 
-- `signal` (rejestracja handlera SIGINT): [main.c:218](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L218)
-- `sigaction` (rejestracja handlera w kierowniku): [kierownik.c:105](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kierownik.c#L105)
-- `kill` (wysłanie sygnału do grupy procesów): [kierownik.c:131](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kierownik.c#L131)
+- `signal` (rejestracja handlerów sygnałów): [main.c:218-222](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L218-L222)
+- `sigaction` (rejestracja handlera w kierowniku): [kierownik.c:100-103](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kierownik.c#L100-L103)
+- `kill` (wysłanie sygnału do grupy procesów): [kierownik.c:129-130](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kierownik.c#L129-L130)
 
 **e. Synchronizacja procesów (Semafory Systemu V)**
 
-- `semget` (utworzenie/pobranie zestawu semaforów): [semafory.c:60](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L60)
-- `semop` (operacja na semaforze - wait/signal): [semafory.c:44](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L44)
-- `semctl` (ustawienie wartości/usunięcie): [semafory.c:112](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L112)
+- `semget` (utworzenie/pobranie zestawu semaforów): [semafory.c:56-64](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/semafory.c#L56-L64)
+- `semop` (operacja na semaforze - wait/signal): [semafory.c:41-44](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/semafory.c#L41-L44)
+- `semctl` (ustawienie wartości/usunięcie): [semafory.c:112-114](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/semafory.c#L112-L114)
 
 **f. Segmenty pamięci dzielonej (`shmget`, `shmat`, `shmdt`, `shmctl`)**
 
-- `shmget` (alokacja segmentu pamięci): [pamiec_wspoldzielona.c:31](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L31)
-- `shmat` (dołączenie segmentu do przestrzeni adresowej): [pamiec_wspoldzielona.c:38](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L38)
-- `shmdt` (odłączenie segmentu): [pamiec_wspoldzielona.c:75](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L75)
-- `shmctl` (usunięcie segmentu): [pamiec_wspoldzielona.c:85](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L85)
+- `ftok` (generowanie unikalnego klucza IPC): [pamiec_wspoldzielona.c:171-177](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/pamiec_wspoldzielona.c#L171-L177)
+- `shmget` (alokacja segmentu pamięci): [pamiec_wspoldzielona.c:27-35](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/pamiec_wspoldzielona.c#L27-L35)
+- `shmat` (dołączenie segmentu do przestrzeni adresowej): [pamiec_wspoldzielona.c:38-42](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/pamiec_wspoldzielona.c#L38-L42)
+- `shmdt` (odłączenie segmentu): [pamiec_wspoldzielona.c:75](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/pamiec_wspoldzielona.c#L75)
+- `shmctl` (usunięcie segmentu): [pamiec_wspoldzielona.c:85](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/pamiec_wspoldzielona.c#L85)
 
 **g. Kolejki komunikatów (`msgget`, `msgsnd`, `msgrcv`, `msgctl`)**
 
-- `msgget` (utworzenie kolejki): [kolejki.c:12](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L12)
-- `msgsnd` (wysłanie komunikatu): [kolejki.c:54](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L54)
-- `msgrcv` (odebranie komunikatu): [kolejki.c:69](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L69)
-- `msgctl` (statystyki kolejki): [kolejki.c:36](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L36)
+- `msgget` (utworzenie kolejki): [kolejki.c:21-30](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kolejki.c#L21-L30)
+- `msgsnd` (wysłanie komunikatu): [kolejki.c:46-63](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kolejki.c#L46-L63)
+- `msgrcv` (odebranie komunikatu): [kolejki.c:66-79](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kolejki.c#L66-L79)
+- `msgctl` (statystyki kolejki): [kolejki.c:81-89](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kolejki.c#L81-L89)
