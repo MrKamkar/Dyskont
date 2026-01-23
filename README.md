@@ -113,8 +113,8 @@ _Zrzut 3: Interwencja - otwarcie Kasy 2 powoduje rozładowanie zatoru z kolejki 
 
 ### Test 4 – Ewakuacja przy maksymalnym obciążeniu
 
-- **Polecenie**: `./dyskont.out 10000 1000 1` -> Wywołanie Ewakuacji (przez `kierownik`, `kill -SIGTERM` lub `CTRL + C`)
-- **Opis**: Sprawdzenie czy system potrafi bezpiecznie i całkowicie posprzątać zasoby w momencie największego obciążenia (tysiące aktywnych procesów klientów i procesów obsługujących kasy).
+- **Polecenie**: `./dyskont.out 10000 1000 0` -> Wywołanie Ewakuacji (przez `kierownik`, `kill -SIGTERM` lub `CTRL + C`)
+- **Opis**: Sprawdzenie czy system potrafi bezpiecznie i całkowicie posprzątać zasoby w momencie największego obciążenia (tysiące aktywnych procesów klientów i procesów obsługujących kasy) przy włączonej symulacji `usleepów`.
 - **Oczekiwany wynik**:
   1. Główny proces natychmiast wysyła SIGTERM do grupy procesów.
   2. Wszystkie procesy (3 managery + tysiące klientów) kończą się w ciągu kilku sekund.
