@@ -29,7 +29,7 @@ static volatile sig_atomic_t g_polecenie_otwarcia_kasy_2 = 0;
 static volatile sig_atomic_t g_polecenie_zamkniecia_kasy = 0;
 
 //Deklaracja funkcji symulacji skanowania
-static void SymulujSkanowanie(int id_kasy, int id_klienta, unsigned int liczba_produktow, double suma);
+static int SymulujSkanowanie(int id_kasy, int id_klienta, unsigned int liczba_produktow, double suma, int ma_alkohol, unsigned int wiek);
 
 
 //Handler SIGTERM
@@ -37,6 +37,7 @@ static void ObslugaSIGTERM(int sig) {
     (void)sig;
 
     if (!g_czy_rodzic) {
+        ZapiszLogF(LOG_INFO, "Kasa stacjonarna [PID: %d]: Ewakuacja (SIGTERM)", getpid());
         if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
         _exit(0);
     }
@@ -45,6 +46,7 @@ static void ObslugaSIGTERM(int sig) {
     signal(SIGTERM, SIG_IGN);
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
     
     //Anulowanie watku zarzadzajacego
     pthread_cancel(g_watek_zarzadzajacy);
@@ -55,14 +57,7 @@ static void ObslugaSIGTERM(int sig) {
     //Czekamy na zakonczenie wszystkich dzieci
     pid_t pid_wait;
     int status;
-    while ((pid_wait = wait(&status)) > 0) {
-        if (WIFEXITED(status)) {
-            int exit_code = WEXITSTATUS(status);
-            ZapiszLogF(LOG_INFO, "Kasa stacjonarna [PID: %d] zakonczona (status: %d)", pid_wait, exit_code);
-        } else if (WIFSIGNALED(status)) {
-            ZapiszLogF(LOG_INFO, "Kasa stacjonarna [PID: %d] zabita sygnalem %d", pid_wait, WTERMSIG(status));
-        }
-    }
+    while ((pid_wait = wait(&status)) > 0);
 
     ZapiszLog(LOG_INFO, "Kasy stacjonarne: Zakonczono wszystkie procesy potomne");
 
@@ -123,12 +118,16 @@ static int ObsluzKlienta(int nr_kasy, int msg_id, int sem_kolejki) {
         ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
         //Obsluga klienta
-        SymulujSkanowanie(nr_kasy, id_klienta, liczba_produktow, suma);
+        int wynik_symulacji = SymulujSkanowanie(nr_kasy, id_klienta, liczba_produktow, suma, msg_in.ma_alkohol, msg_in.wiek);
         
         //Wyslij potwierdzenie do klienta przez WSPOLNA kolejke
         MsgKasaStacj msg_out;
         msg_out.mtype = MSG_RES_STACJONARNA_BASE + id_klienta;
-        msg_out.id_klienta = id_klienta;
+        if (wynik_symulacji == 0) {
+            msg_out.id_klienta = id_klienta; //Sukces
+        } else {
+            msg_out.id_klienta = -2; //Blad - klient niepelnoletni
+        }
         msg_out.liczba_produktow = nr_kasy; //ID kasy
         WyslijKomunikatVIP(g_msg_id_wspolna, &msg_out, msg_size);
 
@@ -231,17 +230,24 @@ static void ZamknijKase(int id_kasy) {
 }
 
 //Symulacja obslugi klienta przez kasjera
-static void SymulujSkanowanie(int id_kasy, int id_klienta, unsigned int liczba_produktow, double suma) {
+static int SymulujSkanowanie(int id_kasy, int id_klienta, unsigned int liczba_produktow, double suma, int ma_alkohol, unsigned int wiek) {
     ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Rozpoczynam obsluge klienta [ID: %d], produktow: %u",
             id_kasy + 1, id_klienta, liczba_produktow);
     
     //Symulacja skanowania produktow
     for (unsigned int i = 0; i < liczba_produktow; i++) {
         SYMULACJA_USLEEP(g_stan_sklepu, CZAS_SKASOWANIA_PRODUKTU_MS * 1000);
+        
+        //Sprawdzenie wieku jesli klient ma alkohol (dodane do symulacji)
+        if (ma_alkohol && wiek < 18) {
+            ZapiszLogF(LOG_BLAD, "Kasjer [Kasa %d]: Klient niepelnoletni!", id_kasy + 1);
+            return -1;
+        }
     }
     
     ZapiszLogF(LOG_INFO, "Kasjer [Kasa %d]: Zakonczono obsluge klienta [ID: %d]. Suma: %.2f PLN",
             id_kasy + 1, id_klienta, suma);
+    return 0;
 }
 
 //Przeniesienie klientow ze wspolnej kolejki do kasy 1

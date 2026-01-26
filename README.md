@@ -60,7 +60,7 @@ Poniżej przedstawiono zbiór testów weryfikujących poprawność działania me
 - **Opis**: Weryfikacja stabilności systemu przy ekstremalnie szybkiej generacji i obsłudze procesów (tryb bez `usleepów`). Test weryfikuje odporność na deadlocki, poprawne czyszczenie procesów zombie oraz poprawność działania algorytmu skalowania kas (+/- 1 kasa na każde K klientów, minimum 3).
 - **Oczekiwany wynik**:
   1. Kasa swoje kończy działanie automatycznie po obsłużeniu wszystkich 10 000 klientów i upłynięciu czasu bezczynności.
-  2. Brak procesów zombie (wszystkie procesy klientów są poprawnie odebrane przez `waitpid` w procesie głównym generatora).
+  2. Brak procesów zombie (wszystkie procesy klientów są poprawnie odebrane przez `wait` w procesie głównym generatora, co można potwierdzić brakiem logów o zombie).
   3. Weryfikacja logiki skalowania: Gdy liczba klientów w sklepie spadnie do 0, system dynamicznie przez wątek skalujący redukuje liczbę kas samoobsługowych do poziomu 3, zgodnie z wzorem $klientów < K \cdot (N-3)$.
   4. Brak komunikatów błędów IPC na standardowym wyjściu błędów.
   5. `kierownik` (opcja 5) pokazuje na koniec 0 klientów w sklepie oraz powrót do 3 czynnych kas samoobsługowych.
@@ -108,8 +108,9 @@ _Zrzut 1: Stan początkowy - stabilna praca, Kasa 1 obsługuje klientów_
 ![Zrzut 2](img/test3_2.png)  
 _Zrzut 2: Zamknięcie kas - Kasa 1 zamykana, klienci gromadzą się we wspólnej kolejce_
 
-![Zrzut 3](img/test3_3.png)  
+![Zrzut 3](img/test3_3.png)
 _Zrzut 3: Interwencja - otwarcie Kasy 2 powoduje rozładowanie zatoru z kolejki samoobsługowej_
+(Jest to zrzut z innego logu, gdyż zmieniłem sposób ich wyświetlania w trakcie poprawiania kodu)
 
 ### Test 4 – Ewakuacja przy maksymalnym obciążeniu
 

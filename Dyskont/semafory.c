@@ -43,8 +43,8 @@ static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* bla
     while (1) {
         if (semop(sem_id, &operacja, 1) == 0) return 0;
         
-        //Przerwanie semafora sygnalem
-        if (errno == EINTR) return -1;
+        //Przerwanie semafora sygnalem - kontynuujemy
+        if (errno == EINTR) continue;
         
         //Inny blad
         if (errno != EINVAL && errno != EIDRM) perror(blad_msg);

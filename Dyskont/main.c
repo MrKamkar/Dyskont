@@ -72,7 +72,7 @@ static void PosprzatajZasobyIPC() {
     ZamknijSystemLogowania();
 }
 
-//Watek sprzatajacy
+    //Watek sprzatajacy
 void* WatekSprzatajacy(void* arg) {
     (void)arg;
     pid_t wynik;
@@ -88,34 +88,30 @@ void* WatekSprzatajacy(void* arg) {
     //Czyszczenie generatora klientow
     kill(g_pid_generatora_klientow, SIGTERM);
     wynik = waitpid(g_pid_generatora_klientow, &status, 0);
-    if (wynik > 0) {
-        if (WIFEXITED(status)) ZapiszLogF(LOG_INFO, "Generator klientow [PID: %d] zakonczony (status: %d)", wynik, WEXITSTATUS(status));
-        else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Generator klientow [PID: %d] zabity sygnalem %d", wynik, WTERMSIG(status));
-    } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Proces generatora klientow zostal juz zakonczony wczesniej");
+    if (wynik == -1 && errno == ECHILD) {
+        ZapiszLogF(LOG_INFO, "Generator klientow [PID: %d] zostal juz zakonczony wczesniej", g_pid_generatora_klientow);
+    }
 
     //Czyszczenie managera kas stacjonarnych
     kill(g_pid_manager_kasjerow, SIGTERM);
     wynik = waitpid(g_pid_manager_kasjerow, &status, 0);
-    if (wynik > 0) {
-        if (WIFEXITED(status)) ZapiszLogF(LOG_INFO, "Manager kas stacjonarnych [PID: %d] zakonczony (status: %d)", wynik, WEXITSTATUS(status));
-        else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Manager kas stacjonarnych [PID: %d] zabity sygnalem %d", wynik, WTERMSIG(status));
-    } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Manager kas stacjonarnych zostal juz zakonczony wczesniej");
+    if (wynik == -1 && errno == ECHILD) {
+        ZapiszLogF(LOG_INFO, "Manager kas stacjonarnych [PID: %d] zostal juz zakonczony wczesniej", g_pid_manager_kasjerow);
+    }
 
     //Czyszczenie kas samoobslugowych
     kill(g_pid_manager_samoobslugowych, SIGTERM);
     wynik = waitpid(g_pid_manager_samoobslugowych, &status, 0);
-    if (wynik > 0) {
-        if (WIFEXITED(status)) ZapiszLogF(LOG_INFO, "Manager kas samoobslugowych [PID: %d] zakonczony (status: %d)", wynik, WEXITSTATUS(status));
-        else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Manager kas samoobslugowych [PID: %d] zabity sygnalem %d", wynik, WTERMSIG(status));
-    } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Manager kas samoobslugowych zostal juz zakonczony wczesniej");
+    if (wynik == -1 && errno == ECHILD) {
+        ZapiszLogF(LOG_INFO, "Manager kas samoobslugowych [PID: %d] zostal juz zakonczony wczesniej", g_pid_manager_samoobslugowych);
+    }
 
     //Czyszczenie pracownika
     kill(g_pid_pracownika, SIGTERM);
     wynik = waitpid(g_pid_pracownika, &status, 0);
-    if (wynik > 0) {
-        if (WIFEXITED(status)) ZapiszLogF(LOG_INFO, "Pracownik obslugi [PID: %d] zakonczony (status: %d)", wynik, WEXITSTATUS(status));
-        else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Pracownik obslugi [PID: %d] zabity sygnalem %d", wynik, WTERMSIG(status));
-    } else if (wynik == -1 && errno == ECHILD) ZapiszLogF(LOG_INFO, "Pracownik obslugi zostal juz zakonczony wczesniej");
+    if (wynik == -1 && errno == ECHILD) {
+        ZapiszLogF(LOG_INFO, "Pracownik obslugi [PID: %d] zostal juz zakonczony wczesniej", g_pid_pracownika);
+    }
     
     //Czyszczenie kierownika (jesli uruchomiony)
     if (g_stan_sklepu->pid_kierownika > 0) {
@@ -154,6 +150,7 @@ void ObslugaSIGUSR2(int sig) {
 
 void ObslugaSIGTERM(int sig) {
     signal(SIGTERM, SIG_IGN);  //Ignorowanie SIGTERM w main
+    signal(SIGTSTP, SIG_IGN);  //Ignorowanie Ctrl+Z podczas ewakuacji
 
     (void)sig;
     ZapiszLog(LOG_OSTRZEZENIE, "Main: Otrzymano SIGTERM - Rozpoczynam procedure EWAKUACJI");
@@ -358,18 +355,14 @@ int main(int argc, char* argv[]) {
     else ZapiszLogF(LOG_INFO, "Uruchomiono proces generatora klientow [PID: %d]", g_pid_generatora_klientow);
 
     //Glowna petla oczekiwania na zakonczenie procesow potomnych
-    pid_t pid_wait;
     int status;
     while (1) {
-        pid_wait = wait(&status);
-        if (pid_wait > 0) {
-            if (WIFEXITED(status)) {
-                ZapiszLogF(LOG_INFO, "Proces potomny [PID: %d] zakonczyl dzialanie (status: %d)", pid_wait, WEXITSTATUS(status));
-            } else if (WIFSIGNALED(status)) {
-                ZapiszLogF(LOG_INFO, "Proces potomny [PID: %d] zostal zabity sygnalem %d", pid_wait, WTERMSIG(status));
-            }
+        pid_t w = wait(&status);
+        if (w == -1) {
+            if (errno == EINTR) continue; //Przerwanie sygnałem (np. SIGUSR) - czekamy dalej
+            if (errno == ECHILD) break;   //Brak dzieci - koniec
+            break; //Inny błąd
         }
-        else if (errno == ECHILD) break;
     }
 
     printf("=== Koniec symulacji ===\n");

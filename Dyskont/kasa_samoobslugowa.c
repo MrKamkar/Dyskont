@@ -120,6 +120,7 @@ static void ObslugaSIGUSR1(int sig) {
     } else {
         //Jesli wolna, konczymy od razu
         if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
+        ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [PID: %d]: Konczy dzialanie (SIGUSR1 - bezczynna)", getpid());
         exit(0);
     }
 }
@@ -351,6 +352,7 @@ static void ObslugaSIGTERM(int sig) {
     (void)sig;
 
     if (!g_czy_rodzic) {
+        ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [PID: %d]: Ewakuacja (SIGTERM)", getpid());
         if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
         _exit(0);
     }
@@ -359,20 +361,14 @@ static void ObslugaSIGTERM(int sig) {
     signal(SIGTERM, SIG_IGN);
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN); //Ignoruj Ctrl+Z
     
     kill(0, SIGTERM);
     
     //Czekamy na zakonczenie wszystkich dzieci
     pid_t pid_wait;
     int status;
-    while ((pid_wait = wait(&status)) > 0) {
-        if (WIFEXITED(status)) {
-            int exit_code = WEXITSTATUS(status);
-            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [PID: %d] zakonczona (status: %d)", pid_wait, exit_code);
-        } else if (WIFSIGNALED(status)) {
-            ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [PID: %d] zabita sygnalem %d", pid_wait, WTERMSIG(status));
-        }
-    }
+    while ((pid_wait = wait(&status)) > 0);
 
     ZapiszLog(LOG_INFO, "Kasy samoobslugowe: Zakonczono wszystkie procesy potomne.");
 

@@ -205,13 +205,14 @@ void ObslugaSIGTERM(int sig) {
 
     if (!g_czy_rodzic) {
         if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
-        _exit(1); //Kod 1 oznacza ewakuacje
+        _exit(2); //Kod 2 oznacza ewakuacje
     }
 
     //Rodzic ignoruje kolejne sygnaly
     signal(SIGTERM, SIG_IGN);
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN); //Ignoruj Ctrl+Z gdyz beda zombie podczas przetwarzania logow
     
     //Wyslij SIGTERM do wszystkich dzieci
     kill(0, SIGTERM);
@@ -222,9 +223,12 @@ void ObslugaSIGTERM(int sig) {
     while ((pid_wait = wait(&status)) > 0) {
         if (WIFEXITED(status)) {
             int exit_code = WEXITSTATUS(status);
-            if (exit_code == 0) ZapiszLogF(LOG_INFO, "Klient [PID: %d] zakonczyl zakupy (status: 0)", pid_wait);
-            else ZapiszLogF(LOG_INFO, "Klient [PID: %d] ewakuowany (status: %d)", pid_wait, exit_code);
-        } else if (WIFSIGNALED(status)) ZapiszLogF(LOG_INFO, "Klient [PID: %d] zostal zabity sygnalem %d", pid_wait, WTERMSIG(status));
+            if (exit_code == 2) {
+                ZapiszLogF(LOG_INFO, "Klient [PID: %d] Ewakuacja (SIGTERM)", pid_wait);
+            }
+        } else if (WIFSIGNALED(status)) {
+            ZapiszLogF(LOG_INFO, "Klient [PID: %d] zostal zabity sygnalem %d", pid_wait, WTERMSIG(status));
+        }
     }
 
     if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
@@ -427,17 +431,28 @@ int main(int argc, char* argv[]) {
                     //Oczekiwanie na odpowiedz od kasy stacjonarnej
                     ZapiszLogF(LOG_DEBUG, "Klient [ID: %d] czeka na odpowiedz od kasy stacjonarnej..", klient->id);
                     if (OdbierzKomunikat(msg_id_wspolna, &res, msg_size, mtype_res, 0, -1, -1) == 0) {
-                        ZapiszLogF(LOG_INFO, "Klient [ID: %d] zakonczyl zakupy przy kasie stacjonarnej %d", klient->id, res.liczba_produktow + 1);
-                        WydrukujParagon(klient, "Kasa Stacjonarna", res.liczba_produktow + 1);
+                        if (res.id_klienta == -2) {
+                             ZapiszLogF(LOG_BLAD, "Klient [ID: %d] niepelnoletni (probowal kupic alkohol). Opuszcza sklep bez zakupow", klient->id);
+                             kod_wyjscia = 1;
+                        } else {
+                             ZapiszLogF(LOG_INFO, "Klient [ID: %d] otrzymal odpowiedz od kasy stacjonarnej %d", klient->id, res.liczba_produktow + 1);
+                             WydrukujParagon(klient, "Kasa Stacjonarna", res.liczba_produktow + 1);
+                        }
                     }
-                }
             }
+        }
 
 
 
             //Wychodzi - sygnalizujemy watkowi skalujacemu kas samoobslugowych
             ZwolnijSemafor(g_sem_id, SEM_NOWY_KLIENT);
             ZwolnijSemafor(g_sem_id, SEM_WEJSCIE_DO_SKLEPU);
+
+            if (kod_wyjscia == 1) {
+                ZapiszLogF(LOG_BLAD, "Klient [PID: %d] odlozyl zakupy i wyszedl ze sklepu. (status: %d)", getpid(), kod_wyjscia);
+            } else {
+                ZapiszLogF(LOG_INFO, "Klient [PID: %d] zakonczyl zakupy pomyslnie (status: %d)", getpid(), kod_wyjscia);
+            }
 
             //Konczenie dzialania procesu
             if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
@@ -452,16 +467,12 @@ int main(int argc, char* argv[]) {
 
     pid_t pid_wait;
     int status;
-    while ((pid_wait = wait(&status)) > 0) {
-        if (WIFEXITED(status)) {
-            int exit_code = WEXITSTATUS(status);
-            if (exit_code == 1) {
-                ZapiszLogF(LOG_BLAD, "Klient [PID: %d] odlozyl zakupy i wyszedl ze sklepu.", pid_wait);
-            } else {
-                ZapiszLogF(LOG_INFO, "Klient [PID: %d] zakonczyl zakupy (status: %d)", pid_wait, exit_code);
-            }
-        } else if (WIFSIGNALED(status)) {
-            ZapiszLogF(LOG_INFO, "Klient [PID: %d] zostal zabity sygnalem %d", pid_wait, WTERMSIG(status));
+    while (1) {
+        pid_wait = wait(&status);
+        if (pid_wait == -1) {
+           if (errno == EINTR) continue;
+           if (errno == ECHILD) break;
+           break;
         }
     }
     return 0;

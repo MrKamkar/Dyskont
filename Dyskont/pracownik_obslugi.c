@@ -45,6 +45,7 @@ static StanSklepu* g_stan_sklepu_pracownik = NULL;
 
 static void ObslugaSIGTERM(int sig) {
     (void)sig;
+    ZapiszLog(LOG_INFO, "Pracownik obslugi: Konczy dzialanie (SIGTERM)");
     if (g_stan_sklepu_pracownik) OdlaczPamiecWspoldzielona(g_stan_sklepu_pracownik);
     _exit(0);
 }
@@ -120,6 +121,7 @@ int main() {
         }
     }
     
+    ZapiszLog(LOG_INFO, "Pracownik obslugi: Konczy dzialanie");
     OdlaczPamiecWspoldzielona(stan_sklepu);
     return 0;
 }
