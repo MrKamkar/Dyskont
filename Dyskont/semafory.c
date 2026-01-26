@@ -29,12 +29,9 @@ size_t PobierzLimitKolejki(void)
 //Wykonuje operacje na semaforach
 static int OperacjaSemafor(int sem_id, int sem_num, int wartosc, const char* blad_msg) {
     short flagi = 0;
-    //Uzywamy SEM_UNDO tylko dla Mutexow oraz semaforow "symetrycznych" (P i V w tym samym procesie)
-    //Dzieki temu, jesli proces klienta zginie, zasoby zostana zwolnione
     if (sem_num == MUTEX_PAMIEC_WSPOLDZIELONA || 
         sem_num == MUTEX_KOLEJKI_VIP ||
-        sem_num == SEM_WEJSCIE_DO_SKLEPU ||
-        sem_num == SEM_KOLEJKA_SAMO) {
+        sem_num == SEM_WEJSCIE_DO_SKLEPU) {
         flagi = SEM_UNDO;
     }
     
@@ -84,7 +81,7 @@ int InicjalizujSemafory(int max_klientow) {
     size_t limit_systemowy = PobierzLimitKolejki();
     
     //Obliczamy pojemnosc kolejek dla roznych typow komunikatow
-    int poj_samo = (limit_systemowy / sizeof(MsgKasaSamo)) - 1;
+    int poj_samo = (limit_systemowy / sizeof(MsgKasaSamo)) - LICZBA_KAS_SAMOOBSLUGOWYCH;
     int poj_stacj = (limit_systemowy / sizeof(MsgKasaStacj)) - 1;
     int poj_prac = (limit_systemowy / sizeof(MsgPracownik)) - 1;
     

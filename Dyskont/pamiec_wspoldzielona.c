@@ -205,42 +205,36 @@ int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_
 }
 
 //Dodaje ID do tablicy pomijanych (znajduje wolne miejsce)
-int DodajPomijanego(StanSklepu* stan, int sem_id, int id_klienta) {
+int DodajPomijanego(StanSklepu* stan, int id_klienta) {
     if (!stan) return -1;
 
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     for (unsigned int i = 0; i < stan->max_klientow_rownoczesnie; i++) {
         if (stan->pomijani_klienci[i] == 0) {
             stan->pomijani_klienci[i] = id_klienta;
-            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             return 0; //Sukces
         }
     }
-    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     return -1; //Brak miejsca
 }
 
 //Sprawdza czy ID jest w tablicy i usuwa je
-int CzyPominiety(StanSklepu* stan, int sem_id, int id_klienta) {
+int CzyPominiety(StanSklepu* stan, int id_klienta) {
     if (!stan) return 0;
 
-    ZajmijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     for (unsigned int i = 0; i < stan->max_klientow_rownoczesnie; i++) {
         if (stan->pomijani_klienci[i] == id_klienta) {
             stan->pomijani_klienci[i] = 0; //Usuwa z tablicy
-            ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
             return 1; //Znaleziono i usunieto
         }
     }
-    ZwolnijSemafor(sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     return 0; //Nie znaleziono
 }
 
 //Aliasy dla kasjera (z ujemnym ID)
-int DodajZmigrowanego(StanSklepu* stan, int sem_id, int id_klienta) {
-    return DodajPomijanego(stan, sem_id, -id_klienta);
+int DodajZmigrowanego(StanSklepu* stan, int id_klienta) {
+    return DodajPomijanego(stan, -id_klienta);
 }
 
-int CzyZmigrowany(StanSklepu* stan, int sem_id, int id_klienta) {
-    return CzyPominiety(stan, sem_id, -id_klienta);
+int CzyZmigrowany(StanSklepu* stan, int id_klienta) {
+    return CzyPominiety(stan, -id_klienta);
 }

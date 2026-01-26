@@ -188,11 +188,11 @@ key_t GenerujKluczIPC(char id_projektu);
 int InicjalizujProcesPochodny(StanSklepu** stan, int* sem_id, const char* nazwa_procesu);
 
 //Zarzadzanie tablica pomijanych klientow (wycofanie z kolejki samoobslugowej)
-int DodajPomijanego(StanSklepu* stan, int sem_id, int id_klienta);
-int CzyPominiety(StanSklepu* stan, int sem_id, int id_klienta);
+int DodajPomijanego(StanSklepu* stan, int id_klienta);
+int CzyPominiety(StanSklepu* stan, int id_klienta);
 
 //Aliasy dla kasjera (z ujemnym ID)
-int DodajZmigrowanego(StanSklepu* stan, int sem_id, int id_klienta);
-int CzyZmigrowany(StanSklepu* stan, int sem_id, int id_klienta);
+int DodajZmigrowanego(StanSklepu* stan, int id_klienta);
+int CzyZmigrowany(StanSklepu* stan, int id_klienta);
 
 #endif

@@ -183,17 +183,16 @@ void* WatekSprawdzajacyKase(void* arg) {
         ZapiszLogF(LOG_INFO, "Watek: Klient [ID: %d] jest w trakcie obslugi, nie moge go wycofac", args->id_klienta);
     }
     
-    ZwolnijSemafor(args->sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
-    
     if (wolna_kasa) {
         //Dodaj klienta do tablicy pomijanych
-        DodajPomijanego(args->stan_sklepu, args->sem_id, args->id_klienta);
+        DodajPomijanego(args->stan_sklepu, args->id_klienta);
         
         ZapiszLogF(LOG_INFO, "Watek: Klient [ID: %d] wycofany do kasy stacjonarnej", args->id_klienta);
         
         //Wyslij sygnal SIGUSR1 do klienta, zeby przerwac msgrcv
         kill(args->pid_klienta, SIGUSR1);
     }
+    ZwolnijSemafor(args->sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
     
     free(args);
     return NULL;
@@ -362,7 +361,15 @@ int main(int argc, char* argv[]) {
                         //Czekanie na odpowiedz blokujaco
                         ZapiszLogF(LOG_DEBUG, "Klient [ID: %d] czeka na odpowiedz od kasy samoobslugowej..", klient->id);
                         MsgKasaSamo res;
-                        int wynik = OdbierzKomunikat(msg_id_samo, &res, sizeof(MsgKasaSamo) - sizeof(long), MSG_RES_SAMOOBSLUGA_BASE + klient->id, 0, g_sem_id, SEM_KOLEJKA_SAMO);
+                        
+                        //Jesli watek sprawdzajacy juz nas "wycofal" (sygnal przyszedl przed msgrcv)
+                        int wynik;
+                        if (g_idz_do_stacjonarnej) {
+                            wynik = -1;
+                            errno = EINTR; //Symulujemy przerwanie
+                        } else {
+                            wynik = OdbierzKomunikat(msg_id_samo, &res, sizeof(MsgKasaSamo) - sizeof(long), MSG_RES_SAMOOBSLUGA_BASE + klient->id, 0, g_sem_id, SEM_KOLEJKA_SAMO);
+                        }
                         
                         if (wynik == 0) {
                             ZapiszLogF(LOG_DEBUG, "Klient [ID: %d] otrzymal odpowiedz od kasy samoobslugowej [%d]", klient->id, res.liczba_produktow + 1);
@@ -380,9 +387,6 @@ int main(int argc, char* argv[]) {
                             } else {
                                 ZapiszLogF(LOG_BLAD, "Klient [ID: %d] nieobsluzony w kasie samoobslugowej (kod: %d)", klient->id, res.id_klienta);
                             }
-                        } else {
-                           //Prawdopodobnie wystapil sygnal przerwania czekania w kolejce do kas samoobslugowych
-                           ZwolnijSemafor(g_sem_id, SEM_KOLEJKA_SAMO);
                         }
                     }
                     

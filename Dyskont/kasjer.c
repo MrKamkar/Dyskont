@@ -101,7 +101,12 @@ static int ObsluzKlienta(int nr_kasy, int msg_id, int sem_kolejki) {
         
         //Kasa 1 sprawdza czy klient zostal zmigrowany do kasy 2
         if (nr_kasy == 0) {
-            if (CzyZmigrowany(g_stan_sklepu, g_sem_id, id_klienta)) {
+            int czy_zmigrowany = 0;
+            ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+            czy_zmigrowany = CzyZmigrowany(g_stan_sklepu, id_klienta);
+            ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+
+            if (czy_zmigrowany) {
                 ZapiszLogF(LOG_INFO, "Kasa 1: Pomijam klienta [ID: %d] - zmigrowany do kasy 2", id_klienta);
                 return 1; //Kontynuuj - pomiń tego klienta
             }
@@ -272,7 +277,9 @@ static void MigrujJednegoKlienta() {
     
     if (OdbierzKomunikat(g_msg_id_1, &msg, msg_size, 0, 0, g_sem_id, SEM_KOLEJKA_KASA_1) == 0) {
         //Dodaj do tablicy zmigrowanych - kasa 1 pominie tego klienta
-        DodajZmigrowanego(g_stan_sklepu, g_sem_id, msg.id_klienta);
+        ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
+        DodajZmigrowanego(g_stan_sklepu, msg.id_klienta);
+        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         
         //Wyslij do kasy 2
         msg.mtype = MSG_TYPE_KASA_2;

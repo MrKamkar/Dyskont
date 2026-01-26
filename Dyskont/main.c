@@ -192,10 +192,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    //Ograniczenie ze wzgledu na limity semaforow
-    if (max_klientow > 32000) {
-        printf("Ostrzezenie: Liczba klientow w sklepie (%d) przekracza limit semafora. Ustawiam na 32000\n", max_klientow);
-        max_klientow = 32000;
+    //Ograniczenie ze wzgledu na limity semaforow i wydajnosc
+    if (max_klientow > 2000) {
+        printf("Ostrzezenie: Maksymalna liczba klientow w sklepie (%d) jest zbyt duza. Symulacja bez sleepow bedzie zbyt wolna. Ograniczam do 2000\n", max_klientow);
+        max_klientow = 2000;
     }
 
     //Opcjonalny tryb testu

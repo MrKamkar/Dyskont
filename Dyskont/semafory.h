@@ -41,6 +41,9 @@ union semun {
     unsigned short *array;  //Tablica dla GETALL, SETALL
 };
 
+//Pobiera limit kolejki
+size_t PobierzLimitKolejki(void);
+
 //Inicjalizuje semafory
 int InicjalizujSemafory(int max_klientow);
 

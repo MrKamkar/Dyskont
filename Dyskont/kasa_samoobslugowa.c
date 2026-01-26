@@ -134,7 +134,7 @@ static int ObsluzKlienta(int id_kasy) {
     //Debug: Oczekiwanie
     ZapiszLogF(LOG_DEBUG, "Kasa samoobslugowa [%d]: Czekam na klienta..", id_kasy + 1);
 
-    //Odbieranie komunikatu bez zwalniania semafora
+    //Odbieranie komunikatu
     int res = OdbierzKomunikat(g_msg_id, &msg, msg_size, MSG_TYPE_SAMOOBSLUGA, 0, -1, -1);
 
     //Jesli pomyslnie odebrano wiadomosc, zwolnij miejsce w kolejce jesli ktos czeka
@@ -144,13 +144,17 @@ static int ObsluzKlienta(int id_kasy) {
         //Natychmiastowe zajecie kasy (blokuje przeniesienie klienta)
         ZajmijKase(id_kasy, msg.id_klienta, g_stan_sklepu, g_sem_id);
 
+        ZajmijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA);
         //Sprawdzenie czy klient nie zrezygnowal tuz przed zajeciem
-        if (CzyPominiety(g_stan_sklepu, g_sem_id, msg.id_klienta)) {
+        if (CzyPominiety(g_stan_sklepu, msg.id_klienta)) {
             ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [%d]: Pomijam klienta [ID: %d] - wycofal sie", id_kasy + 1, msg.id_klienta);
+            ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA); 
             ZwolnijKase(id_kasy, g_stan_sklepu, g_sem_id);
+            ZwolnijSemafor(g_sem_id, SEM_KOLEJKA_SAMO); 
             g_kasa_zajeta = 0;
             return 1;
         }
+        ZwolnijSemafor(g_sem_id, MUTEX_PAMIEC_WSPOLDZIELONA); 
 
         int wynik = ObsluzKlientaSamoobslugowo(id_kasy, msg.id_klienta, msg.liczba_produktow, msg.suma_koszyka, msg.ma_alkohol, msg.wiek, g_stan_sklepu, g_sem_id);
 
@@ -158,11 +162,8 @@ static int ObsluzKlienta(int id_kasy) {
         res_msg.mtype = MSG_RES_SAMOOBSLUGA_BASE + msg.id_klienta;
         res_msg.id_klienta = wynik;
         res_msg.liczba_produktow = id_kasy;
-        
-        //Wyslanie odpowiedzi jesli klient nadal czeka
-        if (!CzyPominiety(g_stan_sklepu, g_sem_id, msg.id_klienta)) {
-            WyslijKomunikatVIP(g_msg_id, &res_msg, msg_size);
-        }
+
+        WyslijKomunikatVIP(g_msg_id, &res_msg, msg_size);
 
         ZwolnijKase(id_kasy, g_stan_sklepu, g_sem_id);
         g_kasa_zajeta = 0; 
@@ -199,6 +200,10 @@ static pid_t UruchomKase(int slot) {
     if (slot < 0 || slot >= LICZBA_KAS_SAMOOBSLUGOWYCH) return -1;
     
     pid_t pid = fork();
+    if (pid == -1) {
+        perror("UruchomKase fork failed");
+        return -1;
+    }
     
     if (pid == 0) {
         //Dziecko ma miec odblokowane sygnaly

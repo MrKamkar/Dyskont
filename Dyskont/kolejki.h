@@ -29,9 +29,6 @@ int WyslijKomunikat(int msg_id, void* msg, size_t size, int sem_id, int sem_num)
 //Zwraca 0 w przypadku sukcesu, -1 w przypadku bledu
 int OdbierzKomunikat(int msg_id, void* msg, size_t size, long typ, int flagi, int sem_id, int sem_num);
 
-//Odbiera komunikat bez sygnalizacji semafora
-int OdbierzKomunikatVIP(int msg_id, void* msg, size_t size, long typ, int flagi);
-
 //Zwraca ilosc komunikatow w kolejce lub -1 w przypadku bledu
 int PobierzRozmiarKolejki(int msg_id);
 

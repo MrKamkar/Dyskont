@@ -3,6 +3,8 @@
 **Kamil Karpiel**  
 Grupa 1 | Studia stacjonarne | III semestr | Nr albumu 155184
 
+> **UWAGA:** Symulacja jest nieskończona. Zdefiniowana jest określona pula klientów, a po ich obsłużeniu proces czeka: albo na pojawienie się nowego klienta, albo na manualną ewakuację (zakończenie programu) przez kierownika.
+>
 > **Uwaga dotycząca logów:** W symulacji tag `[BLAD]` jest używany nie tylko do zgłaszania awarii programu, ale również do obsługi zdarzeń takich jak np. **weryfikacji wieku** (gdy niepełnoletni klient próbuje kupić alkohol). W takim przypadku tag `[BLAD]` oznacza odmowę sprzedaży.
 
 ## 0. Środowisko i kompilacja
@@ -108,9 +110,13 @@ Projekt został podzielony na moduły funkcjonalne:
 
 - **Bezpieczne zamykanie aplikacji i czyszczenie zasobów IPC**: System poprawnie reaguje na sygnały różne zamykania aplikacji, rozpoczynając procedurę ewakuacji klientów, a następnie bezpiecznie kończy wszystkie procesy potomne i zwalnia zasoby IPC.
 
+### Elementy wyróżniające (Dodatkowe funkcjonalności)
+
+- **Kolorowanie wyjścia terminala**: Wątek loggera dynamicznie koloruje logi w zależności od ich wag (czerwone błedy, żółte ostrzeżenia, zielone info), co znacząco poprawia czytelność symulacji w czasie rzeczywistym.
+
 ### 4. Z czym były problemy?
 
-- **Procesy zombie**: Występował problem z niepoprawnym zliczaniem procesów potomnych. Rozwiązano to poprzez użycie `waitpid` w pętli z flagą `WNOHANG`, która umożliwia bezblokowe posprzątanie wszystkich zakończonych dzieci naraz w handlerze `SIGCHLD`, oraz na komunikację przez pipe z pętlą główną.
+- **Procesy zombie**: Występował problem z niepoprawnym zliczaniem procesów potomnych. Rozwiązano to poprzez użycie dedykowanych wątków lub pętli głównej z funkcją `wait` / `waitpid`, co pozwala na bieżące odbieranie statusów zakończonych procesów potomnych bez blokowania głównej logiki symulacji.
 
 - **Deadlocki**: Zdarzały się, gdy procesy blokowały się na operacjach IPC podczas zamykania. Rozwiązano to poprzez zastosowanie **mechanizmu bezpiecznej obsługi sygnałów** oraz wdrożenie procedury, która przy zamykaniu aplikacji (SIGTERM) aktywnie przerywa oczekiwanie i sprząta zasoby.
 
@@ -146,7 +152,7 @@ Umożliwiają dwukierunkową wymianę danych między procesami:
 
 - **Mechanizm VIP:** Funkcja `WyslijKomunikatVIP` tymczasowo podnosi limit kolejki, by zagwarantować miejsce na odpowiedź nawet przy pełnej kolejce.
 
-- **Logowanie nieblokujące:** Procesy wysyłają logi do kolejki loggera z flagą `IPC_NOWAIT`, dzięki czemu symulacja nie zatrzymuje się w oczekiwaniu na zapis na dysk.
+- **Logowanie asynchroniczne:** Procesy wysyłają logi do dedykowanej kolejki komunikatów, która jest opróżniana przez osobny wątek loggera. Zapis na dysk odbywa się w tym osobnym wątku, minimalizując wpływ operacji I/O na płynność symulacji.
 
 ## 6. Kluczowe Pseudokody
 
@@ -250,7 +256,7 @@ Poniżej przedstawiono zbiór testów weryfikujących poprawność działania me
 
 ### Test 1 – Test Obciążeniowy (Brak Deadlocków)
 
-- **Polecenie**: `./dyskont.out 10000 200 1`
+- **Polecenie**: `./dyskont.out 10000 1000 1`
 - **Opis**: Weryfikacja stabilności systemu przy ekstremalnie szybkiej generacji i obsłudze procesów (tryb bez `usleepów`). Test weryfikuje odporność na deadlocki, poprawne czyszczenie procesów zombie oraz poprawność działania algorytmu skalowania kas (+/- 1 kasa na każde K klientów, minimum 3).
 - **Oczekiwany wynik**:
   1. Kasa swoje kończy działanie automatycznie po obsłużeniu wszystkich 10 000 klientów i upłynięciu czasu bezczynności.
@@ -258,6 +264,9 @@ Poniżej przedstawiono zbiór testów weryfikujących poprawność działania me
   3. Weryfikacja logiki skalowania: Gdy liczba klientów w sklepie spadnie do 0, system dynamicznie przez wątek skalujący redukuje liczbę kas samoobsługowych do poziomu 3, zgodnie z wzorem $klientów < K \cdot (N-3)$.
   4. Brak komunikatów błędów IPC na standardowym wyjściu błędów.
   5. `kierownik` (opcja 5) pokazuje na koniec 0 klientów w sklepie oraz powrót do 3 czynnych kas samoobsługowych.
+
+  > **Obserwacja przy ekstremalnym obciążeniu (2000+ procesów):**  
+  > Przy uruchomieniu symulacji z bardzo dużą liczbą równoczesnych klientów (np. 2000), można zaobserwować kilkusekundowe opóźnienie w uruchamianiu dodatkowych kas (np. stan 5/6 przez 5 sekund). Jest to zjawisko naturalne, wynikające z kolejkowania procesów przez planer systemu operacyjnego. Proces managera musi konkurować o czas procesora z tysiącami procesów klientów, co wydłuża czas wykonania operacji `fork()` potrzebnej do utworzenia nowego procesu kasy.
 
 ![Zrzut 1](img/test1_1.png)  
 _Zrzut 1: Kasa kończy działanie po czasie bezczynności_
@@ -281,10 +290,7 @@ _Zrzut 3: Kierownik pokazuje 0 klientów w sklepie oraz 3 czynne kasy samoobsłu
 _Zrzut 1: Prawie pełne obłożenie kolejek (~403 komunikatów) a system nadal działa_
 
 ![Zrzut 2](img/test2_2.png)  
-_Zrzut 2: Program nie zostawia żadnych procesów zombie_
-
-![Zrzut 3](img/test2_3.png)  
-_Zrzut 3: Wszystkie 10 000 klientów dostało swoje paragony (brak utraty danych)_
+_Zrzut 2: Wszystkich 10 000 klientów zostało obsłużonych_
 
 ### Test 3 – Ręczne zarządzanie kasami w szczycie (Signały)
 
@@ -296,15 +302,14 @@ _Zrzut 3: Wszystkie 10 000 klientów dostało swoje paragony (brak utraty danych
   3. Otwarcie kasy powoduje natychmiastowe przejęcie części ruchu i rozładowanie kolejki wspólnej tak, by klient wybrał najmniejszą kolejkę.
   4. System działa stabilnie – nie zawiesza się (deadlock) i nie kończy niespodziewanie błędem segmentacji (segfault) mimo intensywnych zmian konfiguracji kas.
 
-![Zrzut 1](img/test3_1.png)
+![Zrzut 1](img/test3_1.png)  
 _Zrzut 1: Stan początkowy - stabilna praca, Kasa 1 obsługuje klientów_
 
-![Zrzut 2](img/test3_2.png)
+![Zrzut 2](img/test3_2.png)  
 _Zrzut 2: Zamknięcie kas - Kasa 1 zamykana, klienci gromadzą się we wspólnej kolejce_
 
-![Zrzut 3](img/test3_3.png)
+![Zrzut 3](img/test3_3.png)  
 _Zrzut 3: Interwencja - otwarcie Kasy 2 powoduje rozładowanie zatoru z kolejki samoobsługowej_
-(Jest to zrzut z innego logu, gdyż zmieniłem sposób ich wyświetlania w trakcie poprawiania kodu)
 
 ### Test 4 – Ewakuacja przy maksymalnym obciążeniu
 
@@ -324,52 +329,52 @@ _Zrzut 2: Potwierdzenie czystego środowiska (brak wiszących zasobów IPC) po z
 
 ## 8. Linki do kodu (Wymagane funkcje systemowe)
 
-Poniżej znajdują się odniesienia do kluczowych mechanizmów systemowych wykorzystanych w projekcie (linki wskazują na konkretny commit `12eb908`):
+Poniżej znajdują się odniesienia do kluczowych mechanizmów systemowych wykorzystanych w projekcie:
 
 **a. Tworzenie i obsługa plików (`open`, `close`, `write`)**
 
-- `open` (otwarcie pliku logów): [logi.c:30-41](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L30-L41)
-- `read` (odczyt z pliku/urządzenia): [semafory.c:17-18](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/semafory.c#L17-L18)
-- `write` (zapis do logu): [logi.c:101-105](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L101-L105)
-- `close` (zamknięcie pliku): [logi.c:109](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L109)
+- `open` (otwarcie pliku logów): [logi.c:37-41](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L37-L41)
+- `read` (odczyt z pliku/urządzenia): [semafory.c:17-18](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L17-L18)
+- `write` (zapis do logu): [logi.c:103](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L103)
+- `close` (zamknięcie pliku): [logi.c:109](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L109)
 
 **b. Tworzenie procesów (`fork`, `exec`, `exit`, `wait`)**
 
-- `fork` (tworzenie procesu generatora klientów): [main.c:339-345](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L339-L345)
-- `exec` (`execl` - nadpisanie obrazu procesu): [main.c:287-291](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L287-L291)
-- `exit` (`_exit` - zakończenie procesu potomnego): [main.c:291](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L291)
-- `wait` (`waitpid` - oczekiwanie na dzieci): [main.c:364-370](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L364-L370)
+- `fork` (tworzenie procesu generatora klientów): [main.c:336-340](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L336-L340)
+- `exec` (`execl` - nadpisanie obrazu procesu): [main.c:348](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L348)
+- `exit` (`_exit` - zakończenie procesu potomnego): [main.c:352](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L352)
+- `wait` (oczekiwanie na dzieci): [main.c:360](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L360)
 
 **c. Tworzenie i obsługa wątków (`pthread_create`, `pthread_join`, `pthread_exit`)**
 
-- `pthread_create` (utworzenie wątku loggera): [logi.c:130-134](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L130-L134)
-- `pthread_join` (oczekiwanie na wątek sprzątający): [main.c:165](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L165)
-- `pthread_exit` (zakończenie wątku): [logi.c:110](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L110)
-- `pthread_sigmask` (blokowanie sygnałów w wątku): [logi.c:20-21](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/logi.c#L20-L21)
+- `pthread_create` (utworzenie wątku loggera): [logi.c:130](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L130)
+- `pthread_join` (oczekiwanie na wątek sprzątający): [main.c:162](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L162)
+- `pthread_exit` (zakończenie wątku): [logi.c:110](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L110)
+- `pthread_sigmask` (blokowanie sygnałów w wątku): [logi.c:21](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L21)
 
 **d. Obsługa sygnałów (`kill`, `signal`, `sigaction`)**
 
-- `signal` (rejestracja handlerów sygnałów): [main.c:218-222](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/main.c#L218-L222)
-- `sigaction` (rejestracja handlera w kierowniku): [kierownik.c:100-103](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kierownik.c#L100-L103)
-- `kill` (wysłanie sygnału do grupy procesów): [kierownik.c:129-130](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kierownik.c#L129-L130)
+- `signal` (rejestracja handlerów sygnałów): [main.c:215-219](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L215-L219)
+- `sigaction` (rejestracja handlera w kierowniku): [kierownik.c:99-103](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kierownik.c#L99-L103)
+- `kill` (wysłanie sygnału): [kierownik.c:129](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kierownik.c#L129)
 
 **e. Synchronizacja procesów (Semafory Systemu V)**
 
-- `semget` (utworzenie/pobranie zestawu semaforów): [semafory.c:56-64](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/semafory.c#L56-L64)
-- `semop` (operacja na semaforze - wait/signal): [semafory.c:41-44](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/semafory.c#L41-L44)
-- `semctl` (ustawienie wartości/usunięcie): [semafory.c:112-114](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/semafory.c#L112-L114)
+- `semget` (utworzenie/pobranie zestawu semaforów): [semafory.c:60](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L60)
+- `semop` (operacja na semaforze - wait/signal): [semafory.c:44](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L44)
+- `semctl` (ustawienie wartości/usunięcie): [semafory.c:113](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L113)
 
 **f. Segmenty pamięci dzielonej (`shmget`, `shmat`, `shmdt`, `shmctl`)**
 
-- `ftok` (generowanie unikalnego klucza IPC): [pamiec_wspoldzielona.c:171-177](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/pamiec_wspoldzielona.c#L171-L177)
-- `shmget` (alokacja segmentu pamięci): [pamiec_wspoldzielona.c:27-35](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/pamiec_wspoldzielona.c#L27-L35)
-- `shmat` (dołączenie segmentu do przestrzeni adresowej): [pamiec_wspoldzielona.c:38-42](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/pamiec_wspoldzielona.c#L38-L42)
-- `shmdt` (odłączenie segmentu): [pamiec_wspoldzielona.c:75](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/pamiec_wspoldzielona.c#L75)
-- `shmctl` (usunięcie segmentu): [pamiec_wspoldzielona.c:85](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/pamiec_wspoldzielona.c#L85)
+- `ftok` (generowanie unikalnego klucza IPC): [pamiec_wspoldzielona.c:172](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L172)
+- `shmget` (alokacja segmentu pamięci): [pamiec_wspoldzielona.c:31](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L31)
+- `shmat` (dołączenie segmentu do przestrzeni adresowej): [pamiec_wspoldzielona.c:38](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L38)
+- `shmdt` (odłączenie segmentu): [pamiec_wspoldzielona.c:75](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L75)
+- `shmctl` (usunięcie segmentu): [pamiec_wspoldzielona.c:85](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L85)
 
 **g. Kolejki komunikatów (`msgget`, `msgsnd`, `msgrcv`, `msgctl`)**
 
-- `msgget` (utworzenie kolejki): [kolejki.c:21-30](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kolejki.c#L21-L30)
-- `msgsnd` (wysłanie komunikatu): [kolejki.c:46-63](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kolejki.c#L46-L63)
-- `msgrcv` (odebranie komunikatu): [kolejki.c:66-79](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kolejki.c#L66-L79)
-- `msgctl` (statystyki kolejki): [kolejki.c:81-89](https://github.com/MrKamkar/Dyskont/blob/12eb908623b44b7a95c08f7f4a0ba0c812521ca8/Dyskont/kolejki.c#L81-L89)
+- `msgget` (utworzenie kolejki): [kolejki.c:25](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L25)
+- `msgsnd` (wysłanie komunikatu): [kolejki.c:54](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L54)
+- `msgrcv` (odebranie komunikatu): [kolejki.c:69](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L69)
+- `msgctl` (statystyki kolejki/usuwanie): [kolejki.c:85](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L85)
