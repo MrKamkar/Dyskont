@@ -56,7 +56,7 @@ Poniżej przedstawiono zbiór testów weryfikujących poprawność działania me
 
 ### Test 1 – Test Obciążeniowy (Brak Deadlocków)
 
-- **Polecenie**: `./dyskont.out 10000 200 1`
+- **Polecenie**: `./dyskont.out 10000 1000 1`
 - **Opis**: Weryfikacja stabilności systemu przy ekstremalnie szybkiej generacji i obsłudze procesów (tryb bez `usleepów`). Test weryfikuje odporność na deadlocki, poprawne czyszczenie procesów zombie oraz poprawność działania algorytmu skalowania kas (+/- 1 kasa na każde K klientów, minimum 3).
 - **Oczekiwany wynik**:
   1. Kasa swoje kończy działanie automatycznie po obsłużeniu wszystkich 10 000 klientów i upłynięciu czasu bezczynności.
@@ -87,10 +87,7 @@ _Zrzut 3: Kierownik pokazuje 0 klientów w sklepie oraz 3 czynne kasy samoobsłu
 _Zrzut 1: Prawie pełne obłożenie kolejek (~403 komunikatów) a system nadal działa_
 
 ![Zrzut 2](img/test2_2.png)  
-_Zrzut 2: Program nie zostawia żadnych procesów zombie_
-
-![Zrzut 3](img/test2_3.png)  
-_Zrzut 3: Wszystkie 10 000 klientów dostało swoje paragony (brak utraty danych)_
+_Zrzut 2: Wszystkich 10 000 klientów zostało obsłużonych_
 
 ### Test 3 – Ręczne zarządzanie kasami w szczycie (Signały)
 
@@ -108,14 +105,13 @@ _Zrzut 1: Stan początkowy - stabilna praca, Kasa 1 obsługuje klientów_
 ![Zrzut 2](img/test3_2.png)  
 _Zrzut 2: Zamknięcie kas - Kasa 1 zamykana, klienci gromadzą się we wspólnej kolejce_
 
-![Zrzut 3](img/test3_3.png)
+![Zrzut 3](img/test3_3.png)  
 _Zrzut 3: Interwencja - otwarcie Kasy 2 powoduje rozładowanie zatoru z kolejki samoobsługowej_
-(Jest to zrzut z innego logu, gdyż zmieniłem sposób ich wyświetlania w trakcie poprawiania kodu)
 
 ### Test 4 – Ewakuacja przy maksymalnym obciążeniu
 
-- **Polecenie**: `./dyskont.out 10000 1000 0` -> Wywołanie Ewakuacji (przez `kierownik`, `kill -SIGTERM` lub `CTRL + C`)
-- **Opis**: Sprawdzenie czy system potrafi bezpiecznie i całkowicie posprzątać zasoby w momencie największego obciążenia (tysiące aktywnych procesów klientów i procesów obsługujących kasy) przy włączonej symulacji `usleepów`.
+- **Polecenie**: `./dyskont.out 10000 1000 1` -> Wywołanie Ewakuacji (przez `kierownik`, `kill -SIGTERM` lub `CTRL + C`)
+- **Opis**: Sprawdzenie czy system potrafi bezpiecznie i całkowicie posprzątać zasoby w momencie największego obciążenia (tysiące aktywnych procesów klientów i procesów obsługujących kasy).
 - **Oczekiwany wynik**:
   1. Główny proces natychmiast wysyła SIGTERM do grupy procesów.
   2. Wszystkie procesy (3 managery + tysiące klientów) kończą się w ciągu kilku sekund.

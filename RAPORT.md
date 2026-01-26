@@ -333,48 +333,48 @@ Poniżej znajdują się odniesienia do kluczowych mechanizmów systemowych wykor
 
 **a. Tworzenie i obsługa plików (`open`, `close`, `write`)**
 
-- `open` (otwarcie pliku logów): [logi.c:37-41](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L37-L41)
-- `read` (odczyt z pliku/urządzenia): [semafory.c:17-18](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L17-L18)
-- `write` (zapis do logu): [logi.c:103](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L103)
-- `close` (zamknięcie pliku): [logi.c:109](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L109)
+- `open` (otwarcie pliku logów): [logi.c:37-41](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/logi.c#L37-L41)
+- `read` (odczyt z pliku/urządzenia): [semafory.c:17-18](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/semafory.c#L17-L18)
+- `write` (zapis do logu): [logi.c:103](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/logi.c#L103)
+- `close` (zamknięcie pliku): [logi.c:109](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/logi.c#L109)
 
 **b. Tworzenie procesów (`fork`, `exec`, `exit`, `wait`)**
 
-- `fork` (tworzenie procesu generatora klientów): [main.c:336-340](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L336-L340)
-- `exec` (`execl` - nadpisanie obrazu procesu): [main.c:348](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L348)
-- `exit` (`_exit` - zakończenie procesu potomnego): [main.c:352](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L352)
-- `wait` (oczekiwanie na dzieci): [main.c:360](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L360)
+- `fork` (tworzenie procesu generatora klientów): [main.c:336-340](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/main.c#L336-L340)
+- `exec` (`execl` - nadpisanie obrazu procesu): [main.c:348](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/main.c#L348)
+- `exit` (`_exit` - zakończenie procesu potomnego): [main.c:352](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/main.c#L352)
+- `wait` (oczekiwanie na dzieci): [main.c:360](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/main.c#L360)
 
 **c. Tworzenie i obsługa wątków (`pthread_create`, `pthread_join`, `pthread_exit`)**
 
-- `pthread_create` (utworzenie wątku loggera): [logi.c:130](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L130)
-- `pthread_join` (oczekiwanie na wątek sprzątający): [main.c:162](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L162)
-- `pthread_exit` (zakończenie wątku): [logi.c:110](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L110)
-- `pthread_sigmask` (blokowanie sygnałów w wątku): [logi.c:21](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/logi.c#L21)
+- `pthread_create` (utworzenie wątku loggera): [logi.c:130](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/logi.c#L130)
+- `pthread_join` (oczekiwanie na wątek sprzątający): [main.c:162](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/main.c#L162)
+- `pthread_exit` (zakończenie wątku): [logi.c:110](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/logi.c#L110)
+- `pthread_sigmask` (blokowanie sygnałów w wątku): [logi.c:21](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/logi.c#L21)
 
 **d. Obsługa sygnałów (`kill`, `signal`, `sigaction`)**
 
-- `signal` (rejestracja handlerów sygnałów): [main.c:215-219](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/main.c#L215-L219)
-- `sigaction` (rejestracja handlera w kierowniku): [kierownik.c:99-103](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kierownik.c#L99-L103)
-- `kill` (wysłanie sygnału): [kierownik.c:129](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kierownik.c#L129)
+- `signal` (rejestracja handlerów sygnałów): [main.c:215-219](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/main.c#L215-L219)
+- `sigaction` (rejestracja handlera w kierowniku): [kierownik.c:99-103](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/kierownik.c#L99-L103)
+- `kill` (wysłanie sygnału): [kierownik.c:129](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/kierownik.c#L129)
 
 **e. Synchronizacja procesów (Semafory Systemu V)**
 
-- `semget` (utworzenie/pobranie zestawu semaforów): [semafory.c:60](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L60)
-- `semop` (operacja na semaforze - wait/signal): [semafory.c:44](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L44)
-- `semctl` (ustawienie wartości/usunięcie): [semafory.c:113](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/semafory.c#L113)
+- `semget` (utworzenie/pobranie zestawu semaforów): [semafory.c:57](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/semafory.c#L57)
+- `semop` (operacja na semaforze - wait/signal): [semafory.c:41](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/semafory.c#L41)
+- `semctl` (ustawienie wartości/usunięcie): [semafory.c:110](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/semafory.c#L110)
 
 **f. Segmenty pamięci dzielonej (`shmget`, `shmat`, `shmdt`, `shmctl`)**
 
-- `ftok` (generowanie unikalnego klucza IPC): [pamiec_wspoldzielona.c:172](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L172)
-- `shmget` (alokacja segmentu pamięci): [pamiec_wspoldzielona.c:31](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L31)
-- `shmat` (dołączenie segmentu do przestrzeni adresowej): [pamiec_wspoldzielona.c:38](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L38)
-- `shmdt` (odłączenie segmentu): [pamiec_wspoldzielona.c:75](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L75)
-- `shmctl` (usunięcie segmentu): [pamiec_wspoldzielona.c:85](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/pamiec_wspoldzielona.c#L85)
+- `ftok` (generowanie unikalnego klucza IPC): [pamiec_wspoldzielona.c:172](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/pamiec_wspoldzielona.c#L172)
+- `shmget` (alokacja segmentu pamięci): [pamiec_wspoldzielona.c:31](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/pamiec_wspoldzielona.c#L31)
+- `shmat` (dołączenie segmentu do przestrzeni adresowej): [pamiec_wspoldzielona.c:38](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/pamiec_wspoldzielona.c#L38)
+- `shmdt` (odłączenie segmentu): [pamiec_wspoldzielona.c:75](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/pamiec_wspoldzielona.c#L75)
+- `shmctl` (usunięcie segmentu): [pamiec_wspoldzielona.c:85](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/pamiec_wspoldzielona.c#L85)
 
 **g. Kolejki komunikatów (`msgget`, `msgsnd`, `msgrcv`, `msgctl`)**
 
-- `msgget` (utworzenie kolejki): [kolejki.c:25](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L25)
-- `msgsnd` (wysłanie komunikatu): [kolejki.c:54](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L54)
-- `msgrcv` (odebranie komunikatu): [kolejki.c:69](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L69)
-- `msgctl` (statystyki kolejki/usuwanie): [kolejki.c:85](https://github.com/MrKamkar/Dyskont/blob/main/Dyskont/kolejki.c#L85)
+- `msgget` (utworzenie kolejki): [kolejki.c:25](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/kolejki.c#L25)
+- `msgsnd` (wysłanie komunikatu): [kolejki.c:54](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/kolejki.c#L54)
+- `msgrcv` (odebranie komunikatu): [kolejki.c:69](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/kolejki.c#L69)
+- `msgctl` (statystyki kolejki/usuwanie): [kolejki.c:85](https://github.com/MrKamkar/Dyskont/blob/5120ae925ef638b3a29b678cabbe8bb50b1260e9/Dyskont/kolejki.c#L85)
