@@ -232,6 +232,7 @@ void ObslugaSIGTERM(int sig) {
     }
 
     if (g_stan_sklepu) OdlaczPamiecWspoldzielona(g_stan_sklepu);
+    _exit(0);
 }
 
 
@@ -424,6 +425,8 @@ int main(int argc, char* argv[]) {
 
                 //Wyslanie komunikatu do kolejki kas stacjonarnych
                 if (WyslijKomunikat(msg_id_wspolna, &msg, sizeof(MsgKasaStacj) - sizeof(long), g_sem_id, SEM_KOLEJKA_WSPOLNA) == 0) {
+                    //Sygnalizuj ze jest klient w kolejce (dla WatekZarzadzajacy w kasjer.c)
+                    ZwolnijSemafor(g_sem_id, SEM_KLIENT_W_KOLEJCE_WSPOLNEJ);
                     MsgKasaStacj res;
                     size_t msg_size = sizeof(MsgKasaStacj) - sizeof(long);
                     long mtype_res = MSG_RES_STACJONARNA_BASE + klient->id;

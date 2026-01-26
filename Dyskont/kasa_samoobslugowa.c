@@ -108,6 +108,7 @@ static pthread_t g_watek_skalujacy;
 //Flagi dla bezpiecznego zamykania
 static volatile sig_atomic_t g_kasa_zajeta = 0;
 static volatile sig_atomic_t g_zamkniecie_oczekujace = 0;
+static volatile sig_atomic_t g_ewakuacja_trwa = 0;
 
 //Obsluga SIGUSR1 - Lagodne zamykanie przy skalowaniu
 static void ObslugaSIGUSR1(int sig) {
@@ -194,6 +195,7 @@ static void LogikaKasyPotomnej(int id_kasy) {
 
 //Uruchomienie nowej kasy (fork)
 static pid_t UruchomKase(int slot) {
+    if (g_ewakuacja_trwa) return -1;
     if (slot < 0 || slot >= LICZBA_KAS_SAMOOBSLUGOWYCH) return -1;
     
     pid_t pid = fork();
@@ -261,7 +263,7 @@ static void* WatekSkalujacy(void* arg) {
     sigfillset(&set);
     pthread_sigmask(SIG_BLOCK, &set, NULL);
     
-    while (1) {
+    while (!g_ewakuacja_trwa) {
         //Zbieranie zombie (zakonczonych procesow potomnych)
         int status;
         pid_t pid = waitpid(-1, &status, WNOHANG);
@@ -350,6 +352,8 @@ static void* WatekSkalujacy(void* arg) {
 //Obsluga SIGTERM
 static void ObslugaSIGTERM(int sig) {
     (void)sig;
+
+    g_ewakuacja_trwa = 1;
 
     if (!g_czy_rodzic) {
         ZapiszLogF(LOG_INFO, "Kasa samoobslugowa [PID: %d]: Ewakuacja (SIGTERM)", getpid());

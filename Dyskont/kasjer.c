@@ -48,9 +48,8 @@ static void ObslugaSIGTERM(int sig) {
     signal(SIGQUIT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
     
-    //Anulowanie watku zarzadzajacego
+    //Nie robimy join, bo moze to spowodowac deadlock (gdy watek czeka na mutex trzymany przez main)
     pthread_cancel(g_watek_zarzadzajacy);
-    pthread_join(g_watek_zarzadzajacy, NULL);
 
     kill(0, SIGTERM);
     
@@ -295,6 +294,9 @@ static void* WatekZarzadzajacy(void* arg) {
     pthread_sigmask(SIG_SETMASK, &set, NULL);
     
     while (1) {
+        //Czekaj na pojawienie sie klienta w kolejce lub sygnal
+        ZajmijSemaforPrzerywalny(g_sem_id, SEM_KLIENT_W_KOLEJCE_WSPOLNEJ);
+
         //Zbieranie procesow zombie
         int status;
         pid_t pid = waitpid(-1, &status, WNOHANG);

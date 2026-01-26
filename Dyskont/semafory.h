@@ -26,7 +26,9 @@
 #define SEM_KOLEJKA_SAMO 9
 #define SEM_KOLEJKA_PRACOWNIK 10
 
-#define SEM_LICZBA 11 //Calkowita liczba semaforow
+#define SEM_KLIENT_W_KOLEJCE_WSPOLNEJ 11
+
+#define SEM_LICZBA 12 //Calkowita liczba semaforow
 
 
 //Makra mapujace ID kasy na odpowiedni semafor
@@ -50,6 +52,9 @@ int ZajmijSemafor(int sem_id, int sem_num);
 
 //Zwalnia semafor => zwieksza wartosc o 1
 int ZwolnijSemafor(int sem_id, int sem_num);
+
+//Zajmuje semafor ale zwraca -1 gdy przerwany sygnalem (EINTR)
+int ZajmijSemaforPrzerywalny(int sem_id, int sem_num);
 
 //Pobiera liczbe klientow w sklepie (Max - sem_val)
 int PobierzLiczbeKlientow(int sem_id, int max_klientow);

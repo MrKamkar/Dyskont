@@ -78,6 +78,7 @@ int InicjalizujSemafory(int max_klientow) {
     
     //Semafor nowego klienta
     wartosci[SEM_NOWY_KLIENT] = 0;
+    wartosci[SEM_KLIENT_W_KOLEJCE_WSPOLNEJ] = 0;
 
     //Pobieramy systemowy limit msgmnb
     size_t limit_systemowy = PobierzLimitKolejki();
@@ -140,6 +141,13 @@ int ZajmijSemafor(int sem_id, int sem_num) {
 //Zwalnia semafor
 int ZwolnijSemafor(int sem_id, int sem_num) {
     return OperacjaSemafor(sem_id, sem_num, 1, "Blad zwalniania semafora");
+}
+
+//Zajmuje semafor ale nie ponawia proby przy EINTR
+int ZajmijSemaforPrzerywalny(int sem_id, int sem_num) {
+    struct sembuf operacja = { sem_num, -1, 0 };
+    if (semop(sem_id, &operacja, 1) == 0) return 0;
+    return -1;
 }
 
 //Pobiera liczbe klientow w sklepie na podstawie wartosci semafora
